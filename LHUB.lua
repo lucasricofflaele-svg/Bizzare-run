@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v70.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v72.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v70.json"
+local CONFIG_FILE = "LHub_Config_v72.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v70] [%s] %s", module, msg))
+    warn(string.format("[L HUB v72] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -187,7 +187,6 @@ local function bypassAntiCheat()
     if ps then killScripts(ps) end
     if char then killScripts(char) end
     
-    -- Desativa scripts específicos do jogo se conhecidos
     pcall(function()
         local ps = LocalPlayer:FindFirstChild("PlayerScripts")
         if ps and ps:FindFirstChild("VRCameraTeleportDetector") then ps.VRCameraTeleportDetector:Destroy() end
@@ -195,7 +194,7 @@ local function bypassAntiCheat()
 end
 
 -- ==========================================
--- 4. CORE MECHANICS (Tween Rápido + Noclip)
+-- 4. CORE MECHANICS (Teleporte Instantâneo)
 -- ==========================================
 local function setNoclip(char, state)
     if not char then return end
@@ -224,18 +223,20 @@ local function safeTweenTeleport(targetPos)
     if not hrp then return end
     
     bypassAntiCheat()
+    setNoclip(char, true)
     
     local targetCF = CFrame.new(targetPos)
     local startCF = hrp.CFrame
+    
     hrp.Anchored = true
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
     
     pcall(function()
-        for i = 1, 20 do
+        for i = 1, 10 do
             if not hrp.Parent then break end
-            hrp.CFrame = startCF:Lerp(targetCF, i / 20)
-            task.wait(0.05)
+            hrp.CFrame = startCF:Lerp(targetCF, i / 10)
+            task.wait(0.01)
         end
         hrp.CFrame = targetCF
     end)
@@ -243,38 +244,42 @@ local function safeTweenTeleport(targetPos)
     hrp.Anchored = false
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
+    setNoclip(char, false)
     task.wait(0.1)
 end
 
--- Tween Rápido (1500 studs/s) com bypass interno
-local function tweenWithNoclip(targetPos, checkActive)
+-- TELEPORTE RÁPIDO: Atravessa tudo em pequenos pulos por frame
+local function fastTeleport(targetPos, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return false end
     
-    bypassAntiCheat() -- Desliga as checagens antes de voar
-    
+    bypassAntiCheat()
     setNoclip(char, true)
+    
+    local startCF = hrp.CFrame
+    local targetCF = CFrame.new(targetPos)
+    
+    -- Divide a distância em pequenos passos para enganar o anti-cheat (parece velocidade alta)
     local dist = (targetPos - hrp.Position).Magnitude
-    local speed = 1500 
-    local t = dist / speed
-    if t < 0.2 then t = 0.2 end
+    local steps = math.clamp(math.floor(dist / 30), 3, 15) 
     
-    local tween = TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), { CFrame = CFrame.new(targetPos) })
-    tween:Play()
-    
-    while tween.PlaybackState == Enum.PlaybackState.Playing do
+    for i = 1, steps do
         if not checkActive() then
-            tween:Cancel()
             setNoclip(char, false)
             return false
         end
+        hrp.CFrame = startCF:Lerp(targetCF, i / steps)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait()
+        task.wait() -- 1 frame por passo
     end
+    
+    hrp.CFrame = targetCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
     
     setNoclip(char, false)
     return true
@@ -681,7 +686,7 @@ local function executeCollect()
             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
             
-            local success = tweenWithNoclip(standPos, function() return Config.autoCollect and t.model.Parent ~= nil end)
+            local success = fastTeleport(standPos, function() return Config.autoCollect and t.model.Parent ~= nil end)
             if success then
                 holdPromptInfinitely(t, function() return Config.autoCollect end)
             end
@@ -729,8 +734,7 @@ local function startAutoRace()
     if autoRaceActive then return end
     autoRaceActive = true
     
-    -- Desliga o anti-cheat antes de começar o voo
-    bypassAntiCheat()
+    bypassAntiCheat() 
     
     TaskManager:Add(task.spawn(function()
         while autoRaceActive do
@@ -746,7 +750,33 @@ local function startAutoRace()
             hum.PlatformStand = true
             hum.AutoRotate = false
             
-            -- 1. PASSAR PELOS CHECKPOINTS
+            -- Pega todos os itens logo de início
+            local items = {}
+            local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
+            if itemsFolder then
+                for _, item in ipairs(itemsFolder:GetChildren()) do
+                    local name = string.lower(item.Name)
+                    if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
+                        local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        if prompt and prompt.Parent then
+                            local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
+                            table.insert(items, {model = item, prompt = prompt, pos = p})
+                        end
+                    end
+                end
+            end
+            local mapEvents = Workspace:FindFirstChild("MapEvents")
+            local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
+            if arrowsFolder then
+                for _, arrow in ipairs(arrowsFolder:GetChildren()) do
+                    local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    if prompt and prompt.Parent then
+                        table.insert(items, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
+                    end
+                end
+            end
+
+            -- 1. PASSAR PELOS CHECKPOINTS (Voando alto e coletando)
             local checkpointsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Checkpoints")
             if checkpointsFolder then
                 local checkpoints = {}
@@ -761,51 +791,60 @@ local function startAutoRace()
                 
                 for _, cp in ipairs(checkpoints) do
                     if not autoRaceActive then break end
-                    tweenWithNoclip(cp.Position + Vector3.new(0, 3, 0), function() return autoRaceActive end)
-                    task.wait(0.3) -- Pausa curta para o servidor registrar
-                end
-            end
-            
-            -- 2. PEGAR ITENS
-            local targets = {}
-            local mapEvents = Workspace:FindFirstChild("MapEvents")
-            local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
-            if arrowsFolder then
-                for _, arrow in ipairs(arrowsFolder:GetChildren()) do
-                    local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
-                    if prompt and prompt.Parent then
-                        table.insert(targets, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
+                    
+                    -- Sobe MUITO alto (Y + 150) para ir pela reta sem esbarrar
+                    local highPos = cp.Position + Vector3.new(0, 150, 0)
+                    fastTeleport(highPos, function() return autoRaceActive end)
+                    
+                    -- Desce no checkpoint
+                    local cpPos = cp.Position + Vector3.new(0, 3, 0)
+                    fastTeleport(cpPos, function() return autoRaceActive end)
+                    task.wait(0.2)
+                    
+                    -- Verifica se tem item perto do checkpoint (Raio de 250 studs)
+                    local nearbyItems = {}
+                    for i = #items, 1, -1 do
+                        local item = items[i]
+                        if item.model.Parent then
+                            if (item.pos - cp.Position).Magnitude < 250 then
+                                table.insert(nearbyItems, item)
+                                table.remove(items, i)
+                            end
+                        end
                     end
-                end
-            end
-            
-            local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
-            if itemsFolder then
-                for _, item in ipairs(itemsFolder:GetChildren()) do
-                    local name = string.lower(item.Name)
-                    if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
-                        local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
-                        if prompt and prompt.Parent then
-                            local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
-                            table.insert(targets, {model = item, prompt = prompt, pos = p})
+                    
+                    -- Coleta os itens próximos
+                    for _, t in ipairs(nearbyItems) do
+                        if not autoRaceActive then break end
+                        if t.model.Parent then
+                            local rayParams = RaycastParams.new()
+                            rayParams.FilterDescendantsInstances = { char, t.model }
+                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                            local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
+                            local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
+                            
+                            fastTeleport(standPos, function() return autoRaceActive end)
+                            holdPromptInfinitely(t, function() return autoRaceActive end)
                         end
                     end
                 end
             end
             
-            table.sort(targets, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
-            
-            for _, t in ipairs(targets) do
-                if not autoRaceActive then break end
-                if t.model.Parent ~= nil then
-                    local rayParams = RaycastParams.new()
-                    rayParams.FilterDescendantsInstances = { char, t.model }
-                    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                    local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
-                    local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
-                    
-                    local success = tweenWithNoclip(standPos, function() return autoRaceActive and t.model.Parent ~= nil end)
-                    if success then holdPromptInfinitely(t, function() return autoRaceActive end) end
+            -- 2. PEGAR ITENS RESTANTES (que não estavam perto de nenhum checkpoint)
+            if autoRaceActive and #items > 0 then
+                table.sort(items, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
+                for _, t in ipairs(items) do
+                    if not autoRaceActive then break end
+                    if t.model.Parent ~= nil then
+                        local rayParams = RaycastParams.new()
+                        rayParams.FilterDescendantsInstances = { char, t.model }
+                        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                        local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
+                        local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
+                        
+                        fastTeleport(standPos, function() return autoRaceActive and t.model.Parent ~= nil end)
+                        holdPromptInfinitely(t, function() return autoRaceActive end)
+                    end
                 end
             end
             
@@ -813,7 +852,7 @@ local function startAutoRace()
             if autoRaceActive then
                 local f = getFinishLine()
                 if f then 
-                    tweenWithNoclip(f, function() return autoRaceActive end) 
+                    fastTeleport(f, function() return autoRaceActive end) 
                 end
                 task.wait(3) 
             end
@@ -920,7 +959,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v70"
+title.Text = "L HUB | NEXUS v72"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1543,4 +1582,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v70 Inicializado com sucesso.")
+Logger("System", "L HUB v72 Inicializado com sucesso.")
