@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v63.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v65.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v63.json"
+local CONFIG_FILE = "LHub_Config_v65.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v63] [%s] %s", module, msg))
+    warn(string.format("[L HUB v65] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -111,7 +111,6 @@ end
 
 _G.LHub = { Gui = nil, FovCircle = nil, Highlight = nil, ESPObjects = {}, Tasks = TaskManager.Tasks, Conns = ConnectionManager.Conns, NoclipStates = {} }
 
--- Anti-Watchdog (Proteção do ambiente)
 TaskManager:Add(task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
@@ -122,35 +121,46 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 3. MAP & UTILITIES (Corrigido com base no DEX)
+-- 3. MAP, UTILITIES & ROKA SPAWNS (Corrigidos)
 -- ==========================================
-local STAGE1_WIN_POS = Vector3.new(3407.000, -408.536, 2287.5)
+-- Coordenadas EXATAS retiradas das Cutscenes do jogo
+local STAGE1_WIN_POS = Vector3.new(3269.18408, -239.665649, 2052.78711)
+local STAGE2_WIN_POS = Vector3.new(8541.87793, -166.666595, -1274.94568)
+
 local STAGE2_CP1_POS = Vector3.new(-2805.450, -160.060, -1304.949)
 local STAGE2_CP2_POS = Vector3.new(1667.592, -154.669, -1671.076)
-local STAGE2_WIN_POS = Vector3.new(8460.426, 61.457, -1291.114)
 
--- Função melhorada para pegar o mapa real usando a estrutura do Workspace
+local ROKA_SPAWNS = {
+    Vector3.new(758.075, 200.301, 2071.725), Vector3.new(-722.469, 200.301, 2592.146),
+    Vector3.new(-809.457, -38.199, 687.739), Vector3.new(-484.195, 28.807, -640.670),
+    Vector3.new(581.779, -160.702, -1142.168), Vector3.new(-7165.460, -160.702, -2034.455)
+}
+
+-- CORREÇÃO CRÍTICA BASEADA NO DEX: GameConfig é a fonte da verdade.
 local function getMapName()
-    local mapFolder = Workspace:FindFirstChild("Map")
-    if mapFolder then
-        return string.lower(mapFolder.Name)
-    end
     local gc = ReplicatedStorage:FindFirstChild("GameConfig")
     if gc then
         local m = gc:GetAttribute("Map")
-        return type(m) == "string" and string.lower(m) or ""
+        if type(m) == "string" and m ~= "" then
+            return string.lower(m) -- Retorna "stage1", "stage2", etc.
+        end
     end
+    
+    -- Fallback: se por algum motivo o atributo não estiver lá, tenta o Workspace
+    local mapFolder = Workspace:FindFirstChild("Map")
+    if mapFolder and mapFolder.Name ~= "Map" then
+        return string.lower(mapFolder.Name)
+    end
+    
     return ""
 end
 
 local function isStage1()
-    local m = getMapName()
-    return string.find(m, "stage 1") or string.find(m, "stage1") or string.find(m, "1") ~= nil
+    return getMapName() == "stage1"
 end
 
 local function isStage2()
-    local m = getMapName()
-    return string.find(m, "stage 2") or string.find(m, "stage2") or string.find(m, "2") ~= nil
+    return getMapName() == "stage2"
 end
 
 local function isOnTrain()
@@ -158,44 +168,46 @@ local function isOnTrain()
     return string.find(m, "train") or string.find(m, "end")
 end
 
--- Busca o final da linha de forma agressiva
 local function getFinishLine(stage)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
-    local closestPart, minDist = nil, 99999
     
-    -- Tenta buscar a pasta FinishLine, End, ou partes nomeadas "Cube."
-    local finishKeywords = {"FinishLine", "End", "Finish"}
-    for _, kw in ipairs(finishKeywords) do
-        local folder = Workspace:FindFirstChild(kw, true)
-        if folder then
-            for _, child in ipairs(folder:GetDescendants()) do
-                if child:IsA("BasePart") then
-                    local d = (child.Position - hrp.Position).Magnitude
-                    if d < minDist then minDist = d; closestPart = child end
-                end
+    local finishFolder = Workspace:FindFirstChild("FinishLine", true)
+    local targetPart = nil
+    
+    if finishFolder then
+        for _, child in ipairs(finishFolder:GetDescendants()) do
+            if child:IsA("BasePart") and string.find(string.lower(child.Name), "cube") then
+                targetPart = child; break
+            end
+        end
+        if not targetPart then
+            for _, child in ipairs(finishFolder:GetDescendants()) do
+                if child:IsA("BasePart") then targetPart = child; break end
             end
         end
     end
-
-    if not closestPart then
+    
+    if not targetPart then
         for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and (string.find(string.lower(obj.Name), "cube.") or string.find(string.lower(obj.Name), "win")) then
-                local d = (obj.Position - hrp.Position).Magnitude
-                if d < minDist then minDist = d; closestPart = obj end
+            if obj:IsA("BasePart") and string.find(string.lower(obj.Name), "cube.") then
+                targetPart = obj; break
             end
         end
     end
     
-    if closestPart then
-        local dir = Vector3.new(closestPart.Position.X - hrp.Position.X, 0, closestPart.Position.Z - hrp.Position.Z)
+    if targetPart then
+        local dir = (targetPart.Position - hrp.Position)
+        dir = Vector3.new(dir.X, 0, dir.Z)
         if dir.Magnitude > 0.1 then
-            return closestPart.Position + (dir.Unit * 100) + Vector3.new(0, 3, 0)
+            return targetPart.Position + (dir.Unit * 100) + Vector3.new(0, 3, 0)
         end
-        return closestPart.Position + Vector3.new(0, 3, 0)
+        return targetPart.Position + Vector3.new(0, 3, 0)
     end
-    return nil
+    
+    -- Fallback exato do DEX
+    return (stage == 1) and STAGE1_WIN_POS or STAGE2_WIN_POS
 end
 
 local function nukeTeleportDetectorsOnly()
@@ -265,7 +277,6 @@ local function safeTweenTeleport(targetPos)
     task.wait(0.1)
 end
 
--- Velocidade de tween aumentada drasticamente para "voo" instantâneo
 local function tweenWithNoclip(targetPos, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
@@ -275,11 +286,9 @@ local function tweenWithNoclip(targetPos, checkActive)
     
     setNoclip(char, true)
     local dist = (targetPos - hrp.Position).Magnitude
-    
-    -- Speed fixo em 1500 (muito rápido)
     local speed = 1500 
     local t = dist / speed
-    if t < 0.2 then t = 0.2 end -- Mínimo de 0.2s para não bugar o CFrame
+    if t < 0.2 then t = 0.2 end
     
     local tween = TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), { CFrame = CFrame.new(targetPos) })
     tween:Play()
@@ -317,7 +326,6 @@ local function holdPromptInfinitely(target, checkActive)
         hum.JumpPower = 0
     end)
     
-    -- Do DEX: HoldDuration = 3
     local holdTime = p.HoldDuration > 0 and p.HoldDuration or 0.5
     
     pcall(function()
@@ -493,10 +501,6 @@ local function isDamageable(model)
     if model == LocalPlayer.Character then return false end
     local hum = model:FindFirstChildOfClass("Humanoid")
     if hum then return hum.Health > 0 end
-    local hp = model:FindFirstChild("Health") or model:FindFirstChild("HP") or model:FindFirstChild("HealthValue")
-    if hp and ((hp:IsA("NumberValue") or hp:IsA("IntValue")) and hp.Value > 0) then return true end
-    local ah = model:GetAttribute("Health") or model:GetAttribute("HP")
-    if ah and type(ah) == "number" and ah > 0 then return true end
     return false
 end
 
@@ -665,7 +669,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 7. AUTO COLLECT & AUTO RACE (O GRANDE FIX)
+-- 7. AUTO COLLECT & AUTO RACE
 -- ==========================================
 local isCollecting = false
 local function executeCollect()
@@ -685,7 +689,13 @@ local function executeCollect()
                 if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
                     local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
                     if prompt and prompt.Parent then
-                        table.insert(targets, { model = item, prompt = prompt, pos = item:IsA("BasePart") and item.Position or item:GetPivot().Position })
+                        local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
+                        for _, spawnPos in ipairs(ROKA_SPAWNS) do
+                            if (p - spawnPos).Magnitude < 50 then
+                                table.insert(targets, { model = item, prompt = prompt, pos = p })
+                                break
+                            end
+                        end
                     end
                 end
             end
@@ -698,21 +708,18 @@ local function executeCollect()
         
         for _, t in ipairs(targets) do
             if not Config.autoCollect then break end
+            
             local rayParams = RaycastParams.new()
             rayParams.FilterDescendantsInstances = { char, t.model }
             rayParams.FilterType = Enum.RaycastFilterType.Exclude
             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
             
-            hrp.Anchored = true
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            local tween = TweenService:Create(hrp, TweenInfo.new(0.15, Enum.EasingStyle.Linear), { CFrame = CFrame.new(standPos) })
-            tween:Play(); tween.Completed:Wait()
-            hrp.Anchored = false
-            
+            local success = tweenWithNoclip(standPos, function() return Config.autoCollect and t.model.Parent ~= nil end)
+            if success then
+                holdPromptInfinitely(t, function() return Config.autoCollect end)
+            end
             task.wait(0.2)
-            holdPromptInfinitely(t, function() return Config.autoCollect end)
-            task.wait(0.5)
         end
     end)
     isCollecting = false
@@ -725,7 +732,6 @@ TaskManager:Add(task.spawn(function()
     end
 end))
 
--- AUTO RACE UNIFICADO E À PROVA DE FALHAS
 local autoRaceActive = false
 local currentRaceStage = 0
 local origWalk, origJump
@@ -758,7 +764,7 @@ end
 
 local function startAutoRace(stage)
     if autoRaceActive and currentRaceStage == stage then return end
-    if autoRaceActive then stopAutoRace() end -- Garante exclusividade
+    if autoRaceActive then stopAutoRace() end
     
     autoRaceActive = true
     currentRaceStage = stage
@@ -774,24 +780,35 @@ local function startAutoRace(stage)
             if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
             
             -- Verifica se a corrida começou (Cutscene)
-            local isCutscene = Workspace:GetAttribute("MatchStartCutscene") or Workspace:GetAttribute("RaceStarted") == false
+            local isCutscene = Workspace:GetAttribute("MatchStartCutscene") == true
             if isCutscene then
                 task.wait(1)
             else
-                -- CORREÇÃO: Ignora a string do mapa e usa a lógica real de início
-                -- Se o mapa for Stage 1 ou Stage 2, faz o tween.
                 local m = getMapName()
-                
-                -- Se estiver no trem ou lobby
-                if isOnTrain() or string.find(m, "lobby") then
+                -- Se estiver no trem, lobby ou ainda não caiu no mapa certo
+                if isOnTrain() or string.find(m, "lobby") or (stage == 1 and not isStage1()) or (stage == 2 and not isStage2()) then
                     task.wait(1)
                 else
-                    -- ESTAMOS NO MAPA, INICIA O RACE
+                    -- ESTAMOS NO MAPA CORRETO, INICIA O RACE
                     hum.WalkSpeed = 0
                     hum.PlatformStand = true
                     hum.AutoRotate = false
                     
                     local targets = {}
+                    
+                    -- 1. Coletar Arrows
+                    local mapEvents = Workspace:FindFirstChild("MapEvents")
+                    local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
+                    if arrowsFolder then
+                        for _, arrow in ipairs(arrowsFolder:GetChildren()) do
+                            local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if prompt and prompt.Parent then
+                                table.insert(targets, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
+                            end
+                        end
+                    end
+                    
+                    -- 2. Coletar Rokakaka
                     local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
                     if itemsFolder then
                         for _, item in ipairs(itemsFolder:GetChildren()) do
@@ -799,7 +816,13 @@ local function startAutoRace(stage)
                             if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
                                 local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
                                 if prompt and prompt.Parent then
-                                    table.insert(targets, { model = item, prompt = prompt, pos = item:IsA("BasePart") and item.Position or item:GetPivot().Position })
+                                    local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
+                                    for _, spawnPos in ipairs(ROKA_SPAWNS) do
+                                        if (p - spawnPos).Magnitude < 50 then
+                                            table.insert(targets, {model = item, prompt = prompt, pos = p})
+                                            break
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -816,24 +839,17 @@ local function startAutoRace(stage)
                             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
                             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
                             
-                            -- Tween ultra rápido
                             local success = tweenWithNoclip(standPos, function() return autoRaceActive and currentRaceStage == stage and t.model.Parent ~= nil end)
                             if success then holdPromptInfinitely(t, function() return autoRaceActive and currentRaceStage == stage end) end
                         end
                     end
                     
+                    -- 3. Voa para a linha de chegada exata (do DEX)
                     if autoRaceActive and currentRaceStage == stage then
-                        -- Finaliza a corrida: Pega a linha de chegada dinâmica ou usa a posição estática
                         local f = getFinishLine(stage)
-                        if not f then 
-                            f = (stage == 1) and STAGE1_WIN_POS or STAGE2_WIN_POS
-                        end
-                        
                         if f then 
                             tweenWithNoclip(f, function() return autoRaceActive and currentRaceStage == stage end) 
                         end
-                        
-                        -- Aguarda 2 segundos para evitar loop infinito no final
                         task.wait(2)
                     end
                 end
@@ -941,7 +957,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v63"
+title.Text = "L HUB | NEXUS v65"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1229,8 +1245,7 @@ local TabWin = createTab("Stage 1", "⚔️")
 local SectWinS1 = createSection(TabWin, "AUTO WIN S1", "🏁")
 SectWinS1.LayoutOrder = 1
 createButton(SectWinS1, "Auto Win (Stage 1)", function()
-    local p = getFinishLine(1)
-    if p then safeTweenTeleport(p) else safeTweenTeleport(STAGE1_WIN_POS) end
+    safeTweenTeleport(STAGE1_WIN_POS)
 end)
 
 local TabWin2 = createTab("Stage 2", "🛡️")
@@ -1239,8 +1254,7 @@ SectWinS2.LayoutOrder = 1
 createButton(SectWinS2, "TP Checkpoint 1", function() safeTweenTeleport(STAGE2_CP1_POS) end)
 createButton(SectWinS2, "TP Checkpoint 2", function() safeTweenTeleport(STAGE2_CP2_POS) end)
 createButton(SectWinS2, "Auto Win (Stage 2)", function()
-    local p = getFinishLine(2)
-    if p then safeTweenTeleport(p) else safeTweenTeleport(STAGE2_WIN_POS) end
+    safeTweenTeleport(STAGE2_WIN_POS)
 end)
 
 local TabCollect = createTab("Coleta", "💰")
@@ -1578,4 +1592,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v63 Inicializado com sucesso.")
+Logger("System", "L HUB v65 Inicializado com sucesso.")
