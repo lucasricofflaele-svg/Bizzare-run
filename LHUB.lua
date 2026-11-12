@@ -1,3 +1,4 @@
+-- language: Lua, file: LHub_v60.lua, target: Roblox (executor)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -80,6 +81,9 @@ local function saveConfig(silent)
     end
 end
 
+-- ==========================================
+-- CLEANUP
+-- ==========================================
 if _G.LHub then
     if _G.LHub.Tasks then
         for _, t in pairs(_G.LHub.Tasks) do
@@ -104,7 +108,7 @@ if _G.LHub then
     end
 end
 
-_G.LHub = { Gui = nil, FovCircle = nil, Highlight = nil, ESPObjects = {}, Tasks = {}, Conns = {}, Objs = {} }
+_G.LHub = { Gui = nil, FovCircle = nil, Highlight = nil, ESPObjects = {}, Tasks = {}, Conns = {}, Objs = {}, NoclipStates = {} }
 
 local function addTask(t)
     for i = #_G.LHub.Tasks, 1, -1 do
@@ -128,6 +132,9 @@ addTask(task.spawn(function()
     end
 end))
 
+-- ==========================================
+-- VARIÁVEIS DO MAPA E FUNÇÕES BASE
+-- ==========================================
 local STAGE1_WIN_POS = Vector3.new(3407.000, -408.536, 2287.5)
 local STAGE2_CP1_POS = Vector3.new(-2805.450, -160.060, -1304.949)
 local STAGE2_CP2_POS = Vector3.new(1667.592, -154.669, -1671.076)
@@ -314,6 +321,9 @@ local function fastTweenToItem(targetPos, targetModel)
     return s
 end
 
+-- ==========================================
+-- AUTO COLLECT
+-- ==========================================
 local isColl = false
 local function executeCollect()
     if not isAutoCollectEnabled or isColl then return end
@@ -376,6 +386,9 @@ local function executeCollect()
     isColl = false
 end
 
+-- ==========================================
+-- ESP
+-- ==========================================
 local function createESP(m, t, c)
     if _G.LHub.ESPObjects[m] then return end
     local h = Instance.new("Highlight")
@@ -491,6 +504,9 @@ addTask(task.spawn(function()
     end
 end))
 
+-- ==========================================
+-- AIMBOT
+-- ==========================================
 local aTg = nil
 local aHl = Instance.new("Highlight")
 aHl.FillColor = Color3.fromRGB(212, 175, 55)
@@ -682,6 +698,9 @@ addTask(task.spawn(function()
     end
 end))
 
+-- ==========================================
+-- INTERFACE GRÁFICA (UI)
+-- ==========================================
 local sg = Instance.new("ScreenGui")
 sg.Name = "LHub_Luxury"
 sg.ResetOnSpawn = false
@@ -718,6 +737,7 @@ local function toast(m, c)
     end)
 end
 
+-- BOTÃO "L" PARA ABRIR O HUB
 local fb = Instance.new("TextButton")
 fb.Size = UDim2.new(0, 45, 0, 45)
 fb.Position = UDim2.new(0.05, 0, 0.4, 0)
@@ -732,6 +752,7 @@ fb.Parent = sg
 local fbc = Instance.new("UICorner", fb); fbc.CornerRadius = UDim.new(1, 0)
 local fbs = Instance.new("UIStroke", fb); fbs.Color = GD; fbs.Thickness = 2
 
+-- TELA PRINCIPAL DO HUB
 local mf = Instance.new("Frame")
 mf.Size = UDim2.new(0, 600, 0, 400)
 mf.Position = UDim2.new(0.5, -300, 0.5, -200)
@@ -764,6 +785,12 @@ addConn(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
     upScale()
 end))
 
+-- CONEXÃO DO BOTÃO "L" PARA ABRIR/FECHAR O HUB
+addConn(fb.MouseButton1Click:Connect(function()
+    mf.Visible = not mf.Visible
+end))
+
+-- TOP BAR
 local tb = Instance.new("Frame")
 tb.Size = UDim2.new(1, 0, 0, 40)
 tb.BackgroundColor3 = SBC
@@ -808,6 +835,7 @@ cb.Parent = tb
 local cbc = Instance.new("UICorner", cb); cbc.CornerRadius = UDim.new(1, 0)
 addConn(cb.MouseButton1Click:Connect(function() mf.Visible = false end))
 
+-- SIDEBAR
 local sdB = Instance.new("Frame")
 sdB.Size = UDim2.new(0, 150, 1, -40)
 sdB.Position = UDim2.new(0, 0, 0, 40)
@@ -818,6 +846,7 @@ sdB.Parent = mf
 local sdl = Instance.new("UIListLayout", sdB); sdl.Padding = UDim.new(0, 8); sdl.SortOrder = Enum.SortOrder.LayoutOrder; sdl.HorizontalAlignment = Enum.HorizontalAlignment.Center
 Instance.new("UIPadding", sdB).PaddingTop = UDim.new(0, 15)
 
+-- ÁREA DE CONTEÚDO
 local ca = Instance.new("Frame")
 ca.Size = UDim2.new(1, -160, 1, -60)
 ca.Position = UDim2.new(0, 155, 0, 50)
@@ -999,7 +1028,9 @@ local function search()
 end
 addConn(sb:GetPropertyChangedSignal("Text"):Connect(search))
 
--- CRIANDO ABAS
+-- ==========================================
+-- ABAS E BOTÕES DO HUB
+-- ==========================================
 local tW = tab("Stage 1", "⚔️")
 local sW = sec(tW, "AUTO WIN S1", "🏁")
 sW.LayoutOrder = 1
@@ -1485,8 +1516,7 @@ TB["Stage 1"].BackgroundTransparency = 0.1
 TB["Stage 1"].TextColor3 = Color3.fromRGB(255, 255, 255)
 T["Stage 1"].Visible = true
 
-addConn(fb.MouseButton1Click:Connect(function() mf.Visible = not mf.Visible end))
-
+-- DRAG DO HUB
 local dr, di, ds, sp
 local function updDrag(i)
     if dr and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
@@ -1502,6 +1532,9 @@ addConn(tb.InputBegan:Connect(function(i)
 end))
 addConn(UserInputService.InputChanged:Connect(updDrag))
 
+-- ==========================================
+-- BOTÃO FLUTUANTE DO AIMBOT
+-- ==========================================
 aimbotFloatBtn = Instance.new("Frame")
 aimbotFloatBtn.Size = UDim2.new(0, 60, 0, 60)
 aimbotFloatBtn.Position = UDim2.new(config.floatBtnPosXScale, config.floatBtnPosXOffset, config.floatBtnPosYScale, config.floatBtnPosYOffset)
