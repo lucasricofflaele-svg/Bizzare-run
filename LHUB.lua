@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v65.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v66.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v65.json"
+local CONFIG_FILE = "LHub_Config_v66.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v65] [%s] %s", module, msg))
+    warn(string.format("[L HUB v66] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -121,9 +121,8 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 3. MAP, UTILITIES & ROKA SPAWNS (Corrigidos)
+-- 3. MAP, UTILITIES & DETECÇÃO TRIPLA
 -- ==========================================
--- Coordenadas EXATAS retiradas das Cutscenes do jogo
 local STAGE1_WIN_POS = Vector3.new(3269.18408, -239.665649, 2052.78711)
 local STAGE2_WIN_POS = Vector3.new(8541.87793, -166.666595, -1274.94568)
 
@@ -136,36 +135,49 @@ local ROKA_SPAWNS = {
     Vector3.new(581.779, -160.702, -1142.168), Vector3.new(-7165.460, -160.702, -2034.455)
 }
 
--- CORREÇÃO CRÍTICA BASEADA NO DEX: GameConfig é a fonte da verdade.
-local function getMapName()
+-- DETECÇÃO TRIPLA: GameConfig, Workspace e LobbyRigs
+local function detectStage()
+    local mapName = ""
     local gc = ReplicatedStorage:FindFirstChild("GameConfig")
-    if gc then
-        local m = gc:GetAttribute("Map")
-        if type(m) == "string" and m ~= "" then
-            return string.lower(m) -- Retorna "stage1", "stage2", etc.
-        end
+    if gc and gc:GetAttribute("Map") then
+        mapName = string.lower(gc:GetAttribute("Map"))
     end
     
-    -- Fallback: se por algum motivo o atributo não estiver lá, tenta o Workspace
     local mapFolder = Workspace:FindFirstChild("Map")
     if mapFolder and mapFolder.Name ~= "Map" then
-        return string.lower(mapFolder.Name)
+        mapName = string.lower(mapFolder.Name)
     end
     
-    return ""
-end
+    -- Usa os paths do DEX como fallback
+    local client = ReplicatedStorage:FindFirstChild("Client")
+    if client then
+        local offsets = client:FindFirstChild("Controllers") and client.Controllers:FindFirstChild("LobbyRigsController") and client.Controllers.LobbyRigsController:FindFirstChild("Offsets")
+        if offsets then
+            if offsets:FindFirstChild("MainStage1") then return 1 end
+            if offsets:FindFirstChild("MainStage2") then return 2 end
+        end
+        
+        local anims = client:FindFirstChild("Binders") and client.Binders:FindFirstChild("LobbyRig") and client.Binders.LobbyRig:FindFirstChild("Animations")
+        if anims then
+            if anims:FindFirstChild("MainStage1") then return 1 end
+            if anims:FindFirstChild("MainStage2") then return 2 end
+        end
+    end
 
-local function isStage1()
-    return getMapName() == "stage1"
-end
-
-local function isStage2()
-    return getMapName() == "stage2"
+    if string.find(mapName, "stage1") or string.find(mapName, "stage 1") or string.find(mapName, "1") then
+        return 1
+    elseif string.find(mapName, "stage2") or string.find(mapName, "stage 2") or string.find(mapName, "2") then
+        return 2
+    end
+    
+    return nil
 end
 
 local function isOnTrain()
-    local m = getMapName()
-    return string.find(m, "train") or string.find(m, "end")
+    local m = ""
+    local gc = ReplicatedStorage:FindFirstChild("GameConfig")
+    if gc then m = string.lower(gc:GetAttribute("Map") or "") end
+    return string.find(m, "train") ~= nil
 end
 
 local function getFinishLine(stage)
@@ -206,7 +218,6 @@ local function getFinishLine(stage)
         return targetPart.Position + Vector3.new(0, 3, 0)
     end
     
-    -- Fallback exato do DEX
     return (stage == 1) and STAGE1_WIN_POS or STAGE2_WIN_POS
 end
 
@@ -770,6 +781,8 @@ local function startAutoRace(stage)
     currentRaceStage = stage
     
     TaskManager:Add(task.spawn(function()
+        local lastNotified = ""
+        
         while autoRaceActive and currentRaceStage == stage do
             local char = LocalPlayer.Character
             if not char or not char.Parent then task.wait(1); continue end
@@ -779,79 +792,78 @@ local function startAutoRace(stage)
             
             if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
             
-            -- Verifica se a corrida começou (Cutscene)
-            local isCutscene = Workspace:GetAttribute("MatchStartCutscene") == true
-            if isCutscene then
+            -- Força o script a detectar e agir sem depender da cutscene
+            local detectedStage = detectStage()
+            
+            if isOnTrain() then
+                if lastNotified ~= "train" then showToast("Aguardando o trem chegar...", Color3.fromRGB(255, 100, 100)); lastNotified = "train" end
+                task.wait(1)
+            elseif detectedStage ~= stage then
+                if lastNotified ~= "waiting" then showToast("Aguardando Stage " .. stage .. "...", GOLD); lastNotified = "waiting" end
                 task.wait(1)
             else
-                local m = getMapName()
-                -- Se estiver no trem, lobby ou ainda não caiu no mapa certo
-                if isOnTrain() or string.find(m, "lobby") or (stage == 1 and not isStage1()) or (stage == 2 and not isStage2()) then
-                    task.wait(1)
-                else
-                    -- ESTAMOS NO MAPA CORRETO, INICIA O RACE
-                    hum.WalkSpeed = 0
-                    hum.PlatformStand = true
-                    hum.AutoRotate = false
-                    
-                    local targets = {}
-                    
-                    -- 1. Coletar Arrows
-                    local mapEvents = Workspace:FindFirstChild("MapEvents")
-                    local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
-                    if arrowsFolder then
-                        for _, arrow in ipairs(arrowsFolder:GetChildren()) do
-                            local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
-                            if prompt and prompt.Parent then
-                                table.insert(targets, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
-                            end
+                if lastNotified ~= "running" then showToast("Stage " .. stage .. " detectado! Voando...", Color3.fromRGB(50, 255, 100)); lastNotified = "running" end
+                
+                hum.WalkSpeed = 0
+                hum.PlatformStand = true
+                hum.AutoRotate = false
+                
+                local targets = {}
+                
+                -- Arrows
+                local mapEvents = Workspace:FindFirstChild("MapEvents")
+                local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
+                if arrowsFolder then
+                    for _, arrow in ipairs(arrowsFolder:GetChildren()) do
+                        local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        if prompt and prompt.Parent then
+                            table.insert(targets, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
                         end
                     end
-                    
-                    -- 2. Coletar Rokakaka
-                    local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
-                    if itemsFolder then
-                        for _, item in ipairs(itemsFolder:GetChildren()) do
-                            local name = string.lower(item.Name)
-                            if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
-                                local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
-                                if prompt and prompt.Parent then
-                                    local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
-                                    for _, spawnPos in ipairs(ROKA_SPAWNS) do
-                                        if (p - spawnPos).Magnitude < 50 then
-                                            table.insert(targets, {model = item, prompt = prompt, pos = p})
-                                            break
-                                        end
+                end
+                
+                -- Rokas
+                local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
+                if itemsFolder then
+                    for _, item in ipairs(itemsFolder:GetChildren()) do
+                        local name = string.lower(item.Name)
+                        if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
+                            local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if prompt and prompt.Parent then
+                                local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
+                                for _, spawnPos in ipairs(ROKA_SPAWNS) do
+                                    if (p - spawnPos).Magnitude < 50 then
+                                        table.insert(targets, {model = item, prompt = prompt, pos = p})
+                                        break
                                     end
                                 end
                             end
                         end
                     end
-                    
-                    table.sort(targets, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
-                    
-                    for _, t in ipairs(targets) do
-                        if not autoRaceActive or currentRaceStage ~= stage then break end
-                        if t.model.Parent ~= nil then
-                            local rayParams = RaycastParams.new()
-                            rayParams.FilterDescendantsInstances = { char, t.model }
-                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                            local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
-                            local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
-                            
-                            local success = tweenWithNoclip(standPos, function() return autoRaceActive and currentRaceStage == stage and t.model.Parent ~= nil end)
-                            if success then holdPromptInfinitely(t, function() return autoRaceActive and currentRaceStage == stage end) end
-                        end
+                end
+                
+                table.sort(targets, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
+                
+                for _, t in ipairs(targets) do
+                    if not autoRaceActive or currentRaceStage ~= stage then break end
+                    if t.model.Parent ~= nil then
+                        local rayParams = RaycastParams.new()
+                        rayParams.FilterDescendantsInstances = { char, t.model }
+                        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                        local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
+                        local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
+                        
+                        local success = tweenWithNoclip(standPos, function() return autoRaceActive and currentRaceStage == stage and t.model.Parent ~= nil end)
+                        if success then holdPromptInfinitely(t, function() return autoRaceActive and currentRaceStage == stage end) end
                     end
-                    
-                    -- 3. Voa para a linha de chegada exata (do DEX)
-                    if autoRaceActive and currentRaceStage == stage then
-                        local f = getFinishLine(stage)
-                        if f then 
-                            tweenWithNoclip(f, function() return autoRaceActive and currentRaceStage == stage end) 
-                        end
-                        task.wait(2)
+                end
+                
+                if autoRaceActive and currentRaceStage == stage then
+                    local f = getFinishLine(stage)
+                    if f then 
+                        tweenWithNoclip(f, function() return autoRaceActive and currentRaceStage == stage end) 
                     end
+                    task.wait(3) -- Aguarda a UI de vitória
                 end
             end
         end
@@ -957,7 +969,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v65"
+title.Text = "L HUB | NEXUS v66"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1592,4 +1604,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v65 Inicializado com sucesso.")
+Logger("System", "L HUB v66 Inicializado com sucesso.")
