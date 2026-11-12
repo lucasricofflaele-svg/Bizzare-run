@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v77.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v78.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v77.json"
+local CONFIG_FILE = "LHub_Config_v78.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v77] [%s] %s", module, msg))
+    warn(string.format("[L HUB v78] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -221,7 +221,7 @@ local function safeTweenTeleport(targetPos)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
-    bypassAntiCheat()
+    pcall(bypassAntiCheat)
     setNoclip(char, true)
     
     local targetCF = CFrame.new(targetPos)
@@ -247,7 +247,6 @@ local function safeTweenTeleport(targetPos)
     task.wait(0.1)
 end
 
--- Tween Rápido (1500 studs/s) com bypass
 local function tweenWithNoclip(targetPos, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
@@ -255,7 +254,7 @@ local function tweenWithNoclip(targetPos, checkActive)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return false end
     
-    bypassAntiCheat()
+    pcall(bypassAntiCheat)
     setNoclip(char, true)
     
     local dist = (targetPos - hrp.Position).Magnitude
@@ -642,7 +641,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 7. AUTO COLLECT & AUTO RACE UNIVERSAL (v77)
+-- 7. AUTO COLLECT & AUTO RACE UNIVERSAL (v78)
 -- ==========================================
 local isCollecting = false
 local function executeCollect()
@@ -709,7 +708,7 @@ local function stopAutoRace()
     
     local char = LocalPlayer.Character
     if char then
-        setNoclip(char, false) -- Apenas remove o noclip
+        setNoclip(char, false)
     end
     if raceToggle then raceToggle.setState(false) end
 end
@@ -717,143 +716,133 @@ end
 local function startAutoRace()
     if autoRaceActive then return end
     autoRaceActive = true
+    if raceToggle then raceToggle.setState(true) end
     
-    bypassAntiCheat() 
+    pcall(bypassAntiCheat) 
     
     TaskManager:Add(task.spawn(function()
         while autoRaceActive do
-            -- CHECAGEM DE FIM DE PARTIDA (RaceEnded e Rig.Finished)
-            local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
-            local raceOverGui = PlayerGui:FindFirstChild("RaceOver")
-            
-            -- Pega o seu Rig na pasta Workspace.Rigs usando o seu nome dinâmico
-            local rigsFolder = Workspace:FindFirstChild("Rigs")
-            local myRig = rigsFolder and (rigsFolder:FindFirstChild(LocalPlayer.Name) or rigsFolder:FindFirstChild(LocalPlayer.DisplayName))
-            
-            local isFinished = false
-            if myRig and myRig:GetAttribute("Finished") == true then
-                isFinished = true
-            end
-            
-            if (raceEndedGui and raceEndedGui:IsA("ScreenGui")) or (raceOverGui and raceOverGui:IsA("ScreenGui")) or isFinished then
-                stopAutoRace()
-                break
-            end
-
-            local char = LocalPlayer.Character
-            if not char or not char.Parent then task.wait(1); continue end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if not hrp or not hum or hum.Health <= 0 then task.wait(1); continue end
-            
-            if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
-            
-            -- Pega todos os itens logo de início
-            local items = {}
-            local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
-            if itemsFolder then
-                for _, item in ipairs(itemsFolder:GetChildren()) do
-                    local name = string.lower(item.Name)
-                    if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
-                        local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
-                        if prompt and prompt.Parent then
-                            local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
-                            table.insert(items, {model = item, prompt = prompt, pos = p})
-                        end
-                    end
-                end
-            end
-            local mapEvents = Workspace:FindFirstChild("MapEvents")
-            local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
-            if arrowsFolder then
-                for _, arrow in ipairs(arrowsFolder:GetChildren()) do
-                    local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
-                    if prompt and prompt.Parent then
-                        table.insert(items, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
-                    end
-                end
-            end
-
-            -- 1. PASSAR PELOS CHECKPOINTS (Voando alto e coletando)
-            local checkpointsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Checkpoints")
-            if checkpointsFolder then
-                local checkpoints = {}
-                for _, cp in ipairs(checkpointsFolder:GetChildren()) do
-                    table.insert(checkpoints, cp)
-                end
-                table.sort(checkpoints, function(a, b)
-                    local numA = tonumber(a.Name:match("%d+")) or 0
-                    local numB = tonumber(b.Name:match("%d+")) or 0
-                    return numA < numB
-                end)
+            local success, err = pcall(function()
+                local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
+                local raceOverGui = PlayerGui:FindFirstChild("RaceOver")
+                local rigsFolder = Workspace:FindFirstChild("Rigs")
+                local myRig = rigsFolder and (rigsFolder:FindFirstChild(LocalPlayer.Name) or rigsFolder:FindFirstChild(LocalPlayer.DisplayName))
+                local isFinished = false
                 
-                for _, cp in ipairs(checkpoints) do
-                    if not autoRaceActive then break end
-                    
-                    -- Sobe MUITO alto (Y + 150) para ir pela reta sem esbarrar
-                    local highPos = cp.Position + Vector3.new(0, 150, 0)
-                    tweenWithNoclip(highPos, function() return autoRaceActive end)
-                    
-                    -- Desce no checkpoint
-                    local cpPos = cp.Position + Vector3.new(0, 3, 0)
-                    tweenWithNoclip(cpPos, function() return autoRaceActive end)
-                    task.wait(0.3)
-                    
-                    -- Verifica se tem item perto do checkpoint (Raio de 250 studs)
-                    local nearbyItems = {}
-                    for i = #items, 1, -1 do
-                        local item = items[i]
-                        if item.model.Parent then
-                            if (item.pos - cp.Position).Magnitude < 250 then
-                                table.insert(nearbyItems, item)
-                                table.remove(items, i)
+                if myRig and myRig:GetAttribute("Finished") == true then
+                    isFinished = true
+                end
+                
+                if (raceEndedGui and raceEndedGui:IsA("ScreenGui")) or (raceOverGui and raceOverGui:IsA("ScreenGui")) or isFinished then
+                    stopAutoRace()
+                    return
+                end
+
+                local char = LocalPlayer.Character
+                if not char or not char.Parent then task.wait(1); return end
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if not hrp or not hum or hum.Health <= 0 then task.wait(1); return end
+                
+                if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
+                
+                local items = {}
+                local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
+                if itemsFolder then
+                    for _, item in ipairs(itemsFolder:GetChildren()) do
+                        local name = string.lower(item.Name)
+                        if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
+                            local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if prompt and prompt.Parent then
+                                local p = item:IsA("BasePart") and item.Position or item:GetPivot().Position
+                                table.insert(items, {model = item, prompt = prompt, pos = p})
                             end
                         end
                     end
+                end
+                local mapEvents = Workspace:FindFirstChild("MapEvents")
+                local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
+                if arrowsFolder then
+                    for _, arrow in ipairs(arrowsFolder:GetChildren()) do
+                        local prompt = arrow:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        if prompt and prompt.Parent then
+                            table.insert(items, {model = arrow, prompt = prompt, pos = arrow:IsA("BasePart") and arrow.Position or arrow:GetPivot().Position})
+                        end
+                    end
+                end
+
+                local checkpointsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Checkpoints")
+                if checkpointsFolder then
+                    local checkpoints = {}
+                    for _, cp in ipairs(checkpointsFolder:GetChildren()) do
+                        table.insert(checkpoints, cp)
+                    end
+                    table.sort(checkpoints, function(a, b)
+                        local numA = tonumber(a.Name:match("%d+")) or 0
+                        local numB = tonumber(b.Name:match("%d+")) or 0
+                        return numA < numB
+                    end)
                     
-                    -- Coleta os itens próximos
-                    for _, t in ipairs(nearbyItems) do
+                    for _, cp in ipairs(checkpoints) do
                         if not autoRaceActive then break end
-                        if t.model.Parent then
+                        local highPos = cp.Position + Vector3.new(0, 150, 0)
+                        tweenWithNoclip(highPos, function() return autoRaceActive end)
+                        local cpPos = cp.Position + Vector3.new(0, 3, 0)
+                        tweenWithNoclip(cpPos, function() return autoRaceActive end)
+                        task.wait(0.3)
+                        
+                        local nearbyItems = {}
+                        for i = #items, 1, -1 do
+                            local item = items[i]
+                            if item.model.Parent then
+                                if (item.pos - cp.Position).Magnitude < 250 then
+                                    table.insert(nearbyItems, item)
+                                    table.remove(items, i)
+                                end
+                            end
+                        end
+                        
+                        for _, t in ipairs(nearbyItems) do
+                            if not autoRaceActive then break end
+                            if t.model.Parent then
+                                local rayParams = RaycastParams.new()
+                                rayParams.FilterDescendantsInstances = { char, t.model }
+                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
+                                local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
+                                tweenWithNoclip(standPos, function() return autoRaceActive end)
+                                holdPromptInfinitely(t, function() return autoRaceActive end)
+                            end
+                        end
+                    end
+                end
+                
+                if autoRaceActive and #items > 0 then
+                    table.sort(items, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
+                    for _, t in ipairs(items) do
+                        if not autoRaceActive then break end
+                        if t.model.Parent ~= nil then
                             local rayParams = RaycastParams.new()
                             rayParams.FilterDescendantsInstances = { char, t.model }
                             rayParams.FilterType = Enum.RaycastFilterType.Exclude
                             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
                             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
-                            
-                            tweenWithNoclip(standPos, function() return autoRaceActive end)
+                            tweenWithNoclip(standPos, function() return autoRaceActive and t.model.Parent ~= nil end)
                             holdPromptInfinitely(t, function() return autoRaceActive end)
                         end
                     end
                 end
-            end
-            
-            -- 2. PEGAR ITENS RESTANTES (que não estavam perto de nenhum checkpoint)
-            if autoRaceActive and #items > 0 then
-                table.sort(items, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
-                for _, t in ipairs(items) do
-                    if not autoRaceActive then break end
-                    if t.model.Parent ~= nil then
-                        local rayParams = RaycastParams.new()
-                        rayParams.FilterDescendantsInstances = { char, t.model }
-                        rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                        local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
-                        local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
-                        
-                        tweenWithNoclip(standPos, function() return autoRaceActive and t.model.Parent ~= nil end)
-                        holdPromptInfinitely(t, function() return autoRaceActive end)
+                
+                if autoRaceActive then
+                    local f = getFinishLine()
+                    if f then 
+                        tweenWithNoclip(f, function() return autoRaceActive end) 
                     end
+                    task.wait(3) 
                 end
-            end
-            
-            -- 3. IR PARA A LINHA DE CHEGADA
-            if autoRaceActive then
-                local f = getFinishLine()
-                if f then 
-                    tweenWithNoclip(f, function() return autoRaceActive end) 
-                end
-                task.wait(3) 
-            end
+            end)
+            if not success then warn("[Auto Race] Erro: " .. tostring(err)) end
+            task.wait(0.1)
         end
     end))
 end
@@ -957,7 +946,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v77"
+title.Text = "L HUB | NEXUS v78"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1119,7 +1108,15 @@ local function createToggle(parent, text, initialState, callback)
     end
     
     ConnectionManager:Add(track.MouseButton1Click:Connect(function()
-        setState(not state, true)
+        -- Atualiza a UI ANTES de rodar o callback para evitar travamentos
+        state = not state
+        track.BackgroundColor3 = state and Color3.fromRGB(130, 80, 255) or Color3.fromRGB(50, 50, 60)
+        TweenService:Create(thumb, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8) }):Play()
+        
+        -- Chama o callback numa task separada para não travar a UI
+        task.spawn(function()
+            pcall(callback, state)
+        end)
     end))
     
     toggleObj = { frame = frame, track = track, thumb = thumb, setState = setState }
@@ -1244,7 +1241,15 @@ ConnectionManager:Add(searchBox:GetPropertyChangedSignal("Text"):Connect(filterS
 local TabRace = createTab("Auto Race", "🏎️")
 local SectRace = createSection(TabRace, "AUTO RACE UNIVERSAL", "🏁")
 SectRace.LayoutOrder = 1
-raceToggle = createToggle(SectRace, "Enable Auto Race (Anti-Cheat)", false, function(state) if state then startAutoRace() else stopAutoRace() end end)
+raceToggle = createToggle(SectRace, "Enable Auto Race (Anti-Cheat)", false, function(state) 
+    if state then 
+        startAutoRace() 
+        showToast("Auto Race Ativado!", Color3.fromRGB(50, 255, 100))
+    else 
+        stopAutoRace() 
+        showToast("Auto Race Desativado!", Color3.fromRGB(255, 100, 100))
+    end 
+end)
 
 local TabWin = createTab("Teletransporte", "⚔️")
 local SectWinS1 = createSection(TabWin, "TELEPORTES MANUAIS", "🏁")
@@ -1580,4 +1585,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v77 Inicializado com sucesso.")
+Logger("System", "L HUB v78 Inicializado com sucesso.")
