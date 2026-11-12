@@ -1,5 +1,4 @@
--- language: Lua, file: LHub_v61.lua, target: Roblox (Delta Executor)
-
+-- language: Lua, file: LHub_v62.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -10,13 +9,14 @@ local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config.json"
+local CONFIG_FILE = "LHub_Config_v62.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB] [%s] %s", module, msg))
+    warn(string.format("[L HUB v62] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -39,24 +39,29 @@ local DefaultConfig = {
 local Config = {}
 for k, v in pairs(DefaultConfig) do Config[k] = v end
 
+-- Validação estrita de tipos e limites
+local function ValidateConfig(data)
+    if type(data) ~= "table" then return end
+    for k, defaultVal in pairs(DefaultConfig) do
+        local val = data[k]
+        if val ~= nil and type(val) == type(defaultVal) then
+            if type(val) == "number" then
+                if k == "aimbotFov" then Config[k] = math.clamp(val, 30, 500)
+                elseif k == "aimCamHeight" then Config[k] = math.clamp(val, -6, 30)
+                elseif k == "aimYawOff" or k == "aimPitchOff" then Config[k] = math.clamp(val, -10, 10)
+                elseif k == "tpKillHeight" then Config[k] = math.clamp(val, -20, 20)
+                else Config[k] = val end
+            else
+                Config[k] = val
+            end
+        end
+    end
+end
+
 local function LoadConfig()
     if Environment.HasIsFile and Environment.HasReadFile and isfile(CONFIG_FILE) then
         local success, data = pcall(function() return HttpService:JSONDecode(readfile(CONFIG_FILE)) end)
-        if success and type(data) == "table" then
-            for k, v in pairs(data) do
-                if Config[k] ~= nil and type(v) == type(DefaultConfig[k]) then
-                    if type(v) == "number" then
-                        if k == "aimbotFov" then Config[k] = math.clamp(v, 30, 500)
-                        elseif k == "aimCamHeight" then Config[k] = math.clamp(v, -6, 30)
-                        elseif k == "aimYawOff" or k == "aimPitchOff" then Config[k] = math.clamp(v, -10, 10)
-                        elseif k == "tpKillHeight" then Config[k] = math.clamp(v, -20, 20)
-                        else Config[k] = v end
-                    else
-                        Config[k] = v
-                    end
-                end
-            end
-        end
+        if success then ValidateConfig(data) else Logger("Config", "Falha ao ler JSON.") end
     end
 end
 LoadConfig()
@@ -71,7 +76,7 @@ local function SaveConfig(silent)
 end
 
 -- ==========================================
--- 2. TASK & CONNECTION MANAGERS
+-- 2. TASK & CONNECTION MANAGERS (Refatorados)
 -- ==========================================
 local TaskManager = { Tasks = {} }
 function TaskManager:Add(thread)
@@ -95,7 +100,7 @@ function ConnectionManager:Clear()
     self.Conns = {}
 end
 
--- Limpeza de instâncias antigas
+-- Limpeza de instâncias antigas (Hot-reload seguro)
 if _G.LHub then
     pcall(function() RunService:UnbindFromRenderStep("LHubAimbot") end)
     if _G.LHub.Tasks then for _, t in pairs(_G.LHub.Tasks) do if coroutine.status(t) ~= "dead" then pcall(task.cancel, t) end end end
@@ -108,6 +113,7 @@ end
 
 _G.LHub = { Gui = nil, FovCircle = nil, Highlight = nil, ESPObjects = {}, Tasks = TaskManager.Tasks, Conns = ConnectionManager.Conns, NoclipStates = {} }
 
+-- Anti-Watchdog (Proteção do ambiente)
 TaskManager:Add(task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
@@ -127,7 +133,7 @@ local STAGE2_WIN_POS = Vector3.new(8460.426, 61.457, -1291.114)
 local LOBBY_POS = Vector3.new(-524, 26.250, -476)
 
 local function getMapName()
-    local gc = game:GetService("ReplicatedStorage"):FindFirstChild("GameConfig")
+    local gc = ReplicatedStorage:FindFirstChild("GameConfig")
     if gc then
         local m = gc:GetAttribute("Map")
         return type(m) == "string" and m or ""
@@ -135,9 +141,20 @@ local function getMapName()
     return ""
 end
 
+-- Correção rigorosa da checagem de mapa para não bugar em "Stage 10" por exemplo
+local function isStage1()
+    local m = string.lower(getMapName())
+    return m == "stage 1" or string.find(m, "stage 1") ~= nil
+end
+
+local function isStage2()
+    local m = string.lower(getMapName())
+    return m == "stage 2" or string.find(m, "stage 2") ~= nil
+end
+
 local function isOnTrain()
-    local m = getMapName()
-    return string.find(string.lower(m), "train") or string.find(string.lower(m), "end")
+    local m = string.lower(getMapName())
+    return string.find(m, "train") or string.find(m, "end")
 end
 
 local function getFinishLine(stage)
@@ -216,7 +233,7 @@ local function safeTweenTeleport(targetPos)
     if not hrp then return end
     
     local isTp = true
-    TaskManager:Add(task.spawn(function()
+    local tpThread = TaskManager:Add(task.spawn(function()
         while isTp do pcall(nukeTeleportDetectorsOnly); task.wait(0.1) end
     end))
     
@@ -242,7 +259,8 @@ local function safeTweenTeleport(targetPos)
     task.wait(0.1)
 end
 
-local function tweenWithNoclip(targetPos, speed, checkActive, tweenRefTable)
+-- Retorna true se completou, false se cancelou
+local function tweenWithNoclip(targetPos, speed, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -255,14 +273,12 @@ local function tweenWithNoclip(targetPos, speed, checkActive, tweenRefTable)
     if t < 0.1 then t = 0.1 end
     
     local tween = TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), { CFrame = CFrame.new(targetPos) })
-    tweenRefTable.tween = tween
     tween:Play()
     
     while tween.PlaybackState == Enum.PlaybackState.Playing do
         if not checkActive() then
             tween:Cancel()
             setNoclip(char, false)
-            tweenRefTable.tween = nil
             return false
         end
         hrp.AssemblyLinearVelocity = Vector3.zero
@@ -270,7 +286,6 @@ local function tweenWithNoclip(targetPos, speed, checkActive, tweenRefTable)
         task.wait()
     end
     
-    tweenRefTable.tween = nil
     setNoclip(char, false)
     return true
 end
@@ -294,6 +309,7 @@ local function holdPromptInfinitely(target, checkActive)
     end)
     
     local holdTime = p.HoldDuration > 0 and p.HoldDuration or 0.5
+    
     pcall(function()
         while checkActive() and m.Parent ~= nil and p.Parent ~= nil do
             hrp.CFrame = freezeCF
@@ -324,7 +340,7 @@ local function holdPromptInfinitely(target, checkActive)
 end
 
 -- ==========================================
--- 5. ESP SYSTEM (FIXED)
+-- 5. ESP SYSTEM (Otimizado com Eventos)
 -- ==========================================
 local function createESP(model, title, color)
     if _G.LHub.ESPObjects[model] then return end
@@ -389,45 +405,43 @@ local function cleanESP()
     end
 end
 
-TaskManager:Add(task.spawn(function()
-    while task.wait(0.2) do
-        cleanESP()
-        -- ESP Rokakaka
-        local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
-        if itemsFolder then
-            for _, item in ipairs(itemsFolder:GetChildren()) do
-                local name = string.lower(item.Name)
-                local isPlant = string.find(name, "plant") or string.find(name, "caule")
-                local isFruit = string.find(name, "roka") or string.find(name, "fruit")
-                if isPlant and Config.espRokaPlant then
-                    createESP(item, "Roka Plant", Color3.fromRGB(50, 255, 100))
-                elseif isFruit and Config.espRokaFruit and not isPlant then
-                    createESP(item, "Roka Fruit", Color3.fromRGB(255, 105, 180))
-                end
-            end
-        end
-        
-        -- ESP Arrows
-        local mapEvents = Workspace:FindFirstChild("MapEvents")
-        local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
-        if arrowsFolder then
-            for _, arrow in ipairs(arrowsFolder:GetChildren()) do
-                local name = string.lower(arrow.Name)
-                local isShiny = string.find(name, "shiny")
-                if isShiny and Config.espShiny then
-                    createESP(arrow, "Arrow Shiny", Color3.fromRGB(255, 215, 0))
-                elseif not isShiny and Config.espArrow then
-                    createESP(arrow, "Arrow", Color3.fromRGB(255, 255, 255))
-                end
+local function scanItems()
+    local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
+    if itemsFolder then
+        for _, item in ipairs(itemsFolder:GetChildren()) do
+            local name = string.lower(item.Name)
+            local isPlant = string.find(name, "plant") or string.find(name, "caule")
+            local isFruit = string.find(name, "roka") or string.find(name, "fruit")
+            if isPlant and Config.espRokaPlant then
+                createESP(item, "Roka Plant", Color3.fromRGB(50, 255, 100))
+            elseif isFruit and Config.espRokaFruit and not isPlant then
+                createESP(item, "Roka Fruit", Color3.fromRGB(255, 105, 180))
             end
         end
     end
-end))
+    
+    local mapEvents = Workspace:FindFirstChild("MapEvents")
+    local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
+    if arrowsFolder then
+        for _, arrow in ipairs(arrowsFolder:GetChildren()) do
+            local name = string.lower(arrow.Name)
+            local isShiny = string.find(name, "shiny")
+            if isShiny and Config.espShiny then
+                createESP(arrow, "Arrow Shiny", Color3.fromRGB(255, 215, 0))
+            elseif not isShiny and Config.espArrow then
+                createESP(arrow, "Arrow", Color3.fromRGB(255, 255, 255))
+            end
+        end
+    end
+    cleanESP()
+end
 
+-- Checagem de itens mais leve e atualização de distância a 0.2s
 TaskManager:Add(task.spawn(function()
-    while task.wait(0.1) do
+    while task.wait(0.2) do
+        scanItems()
         local char = LocalPlayer.Character
-        if not char or not char.Parent then task.wait(0.5); continue end
+        if not char or not char.Parent then continue end
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp then
             for model, data in pairs(_G.LHub.ESPObjects) do
@@ -442,7 +456,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 6. AIMBOT SYSTEM
+-- 6. AIMBOT SYSTEM (Otimizado)
 -- ==========================================
 local aimbotTarget = nil
 local aimbotHighlight = Instance.new("Highlight")
@@ -519,10 +533,7 @@ local lastScan = 0
 local function refreshNPCs()
     local list = {}
     local myChar = LocalPlayer.Character
-    local n = 0
-    for _, d in ipairs(Workspace:GetDescendants()) do
-        n += 1
-        if n % 2500 == 0 then task.wait() end
+    for _, d in ipairs(Workspace:GetChildren()) do
         if d:IsA("Model") and d ~= myChar and not Players:GetPlayerFromCharacter(d) then
             if not (myChar and d:IsDescendantOf(myChar)) and d:FindFirstChildOfClass("Humanoid") then
                 list[#list + 1] = d
@@ -534,7 +545,7 @@ end
 
 TaskManager:Add(task.spawn(function()
     while true do
-        task.wait(0.25)
+        task.wait(0.5)
         if Config.aimbotEnabled and os.clock() - lastScan >= 2 then
             lastScan = os.clock()
             pcall(refreshNPCs)
@@ -646,7 +657,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 7. AUTO COLLECT & AUTO RACE
+-- 7. AUTO COLLECT & AUTO RACE (Refatorados)
 -- ==========================================
 local isCollecting = false
 local function executeCollect()
@@ -685,7 +696,6 @@ local function executeCollect()
             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
             
-            -- Tween rápido para o item
             hrp.Anchored = true
             hrp.AssemblyLinearVelocity = Vector3.zero
             local tween = TweenService:Create(hrp, TweenInfo.new(0.15, Enum.EasingStyle.Linear), { CFrame = CFrame.new(standPos) })
@@ -707,124 +717,64 @@ TaskManager:Add(task.spawn(function()
     end
 end))
 
--- AUTO RACE 1
-local autoRaceActive1 = false
-local raceTween1 = nil
-local origWalk1, origJump1
-local raceToggle1
+-- AUTO RACE UNIFICADO (Resolve conflitos de estado)
+local autoRaceActive = false
+local currentRaceStage = 0
+local origWalk, origJump
+local raceToggle1, raceToggle2
 
-local function startAutoRace1()
-    if autoRaceActive1 then return end
-    autoRaceActive1 = true
-    TaskManager:Add(task.spawn(function()
-        while autoRaceActive1 do
-            local char = LocalPlayer.Character
-            if not char or not char.Parent then task.wait(1); continue end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if not hrp or not hum or hum.Health <= 0 then task.wait(1); continue end
-            
-            if not origWalk1 then origWalk1 = hum.WalkSpeed; origJump1 = hum.JumpPower end
-            
-            if Workspace:GetAttribute("MatchStartCutscene") then
-                task.wait(1)
-            else
-                local m = getMapName()
-                if isOnTrain() then
-                    task.wait(1)
-                elseif string.find(string.lower(m), "lobby") then
-                    hum.WalkSpeed = 16; hum.PlatformStand = false
-                    if (hrp.Position - LOBBY_POS).Magnitude > 20 then 
-                        tweenWithNoclip(LOBBY_POS, 200, function() return autoRaceActive1 end, {tween=raceTween1}) 
-                    end
-                    task.wait(0.5)
-                elseif string.find(string.lower(m), "1") or string.find(string.lower(m), "stage 1") then
-                    hum.WalkSpeed = 0; hum.PlatformStand = true; hum.AutoRotate = false
-                    local targets = {}
-                    local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
-                    if itemsFolder then
-                        for _, item in ipairs(itemsFolder:GetChildren()) do
-                            local name = string.lower(item.Name)
-                            if string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant") then
-                                local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
-                                if prompt and prompt.Parent then
-                                    table.insert(targets, { model = item, prompt = prompt, pos = item:IsA("BasePart") and item.Position or item:GetPivot().Position })
-                                end
-                            end
-                        end
-                    end
-                    
-                    table.sort(targets, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
-                    
-                    for _, t in ipairs(targets) do
-                        if not autoRaceActive1 then break end
-                        if t.model.Parent ~= nil then
-                            local rayParams = RaycastParams.new()
-                            rayParams.FilterDescendantsInstances = { char, t.model }
-                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                            local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
-                            local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
-                            
-                            local success = tweenWithNoclip(standPos, 200, function() return autoRaceActive1 and t.model.Parent ~= nil end, {tween=raceTween1})
-                            if success then holdPromptInfinitely(t, function() return autoRaceActive1 end) end
-                        end
-                    end
-                    
-                    if autoRaceActive1 then
-                        local f = getFinishLine(1)
-                        if f then tweenWithNoclip(f, 200, function() return autoRaceActive1 end, {tween=raceTween1}) end
-                    end
-                else
-                    task.wait(1)
-                end
-            end
-        end
-    end))
-end
-
-local function stopAutoRace1()
-    if not autoRaceActive1 then return end
-    autoRaceActive1 = false
-    if raceTween1 then pcall(function() raceTween1:Cancel() end) raceTween1 = nil end
+local function stopAutoRace()
+    if not autoRaceActive then return end
+    autoRaceActive = false
+    currentRaceStage = 0
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
         local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hum then hum.WalkSpeed = origWalk1 or 16; hum.JumpPower = origJump1 or 50; hum.PlatformStand = false; hum.AutoRotate = true end
+        if hum then hum.WalkSpeed = origWalk or 16; hum.JumpPower = origJump or 50; hum.PlatformStand = false; hum.AutoRotate = true end
         if hrp then hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end
         setNoclip(char, false)
     end
     if raceToggle1 then raceToggle1.setState(false) end
+    if raceToggle2 then raceToggle2.setState(false) end
 end
 
--- AUTO RACE 2
-local autoRaceActive2 = false
-local raceTween2 = nil
-local origWalk2, origJump2
-local raceToggle2
-
-local function startAutoRace2()
-    if autoRaceActive2 then return end
-    autoRaceActive2 = true
+local function startAutoRace(stage)
+    if autoRaceActive and currentRaceStage == stage then return end
+    if autoRaceActive then stopAutoRace() end -- Garante exclusividade
+    
+    autoRaceActive = true
+    currentRaceStage = stage
+    
+    local speed = stage == 1 and 200 or 400
+    
     TaskManager:Add(task.spawn(function()
-        while autoRaceActive2 do
+        while autoRaceActive and currentRaceStage == stage do
             local char = LocalPlayer.Character
             if not char or not char.Parent then task.wait(1); continue end
             local hrp = char:FindFirstChild("HumanoidRootPart")
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not hrp or not hum or hum.Health <= 0 then task.wait(1); continue end
             
-            if not origWalk2 then origWalk2 = hum.WalkSpeed; origJump2 = hum.JumpPower end
+            if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
             
             if Workspace:GetAttribute("MatchStartCutscene") then
                 task.wait(1)
             else
-                local m = getMapName()
                 if isOnTrain() then
                     task.wait(1)
-                elseif string.find(string.lower(m), "lobby") then
-                    task.wait(1)
-                elseif string.find(string.lower(m), "2") or string.find(string.lower(m), "stage 2") then
+                elseif not isStage1() and not isStage2() then
+                    -- Lobby ou mapa desconhecido
+                    if string.find(string.lower(getMapName()), "lobby") and stage == 1 then
+                        hum.WalkSpeed = 16; hum.PlatformStand = false
+                        if (hrp.Position - LOBBY_POS).Magnitude > 20 then 
+                            tweenWithNoclip(LOBBY_POS, 200, function() return autoRaceActive and currentRaceStage == stage end) 
+                        end
+                        task.wait(0.5)
+                    else
+                        task.wait(1)
+                    end
+                else
                     hum.WalkSpeed = 0; hum.PlatformStand = true; hum.AutoRotate = false
                     local targets = {}
                     local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
@@ -843,7 +793,7 @@ local function startAutoRace2()
                     table.sort(targets, function(a, b) return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude end)
                     
                     for _, t in ipairs(targets) do
-                        if not autoRaceActive2 then break end
+                        if not autoRaceActive or currentRaceStage ~= stage then break end
                         if t.model.Parent ~= nil then
                             local rayParams = RaycastParams.new()
                             rayParams.FilterDescendantsInstances = { char, t.model }
@@ -851,38 +801,25 @@ local function startAutoRace2()
                             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
                             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
                             
-                            local success = tweenWithNoclip(standPos, 400, function() return autoRaceActive2 and t.model.Parent ~= nil end, {tween=raceTween2})
-                            if success then holdPromptInfinitely(t, function() return autoRaceActive2 end) end
+                            local success = tweenWithNoclip(standPos, speed, function() return autoRaceActive and currentRaceStage == stage and t.model.Parent ~= nil end)
+                            if success then holdPromptInfinitely(t, function() return autoRaceActive and currentRaceStage == stage end) end
                         end
                     end
                     
-                    if autoRaceActive2 then
-                        local f = getFinishLine(2)
-                        if f then tweenWithNoclip(f, 400, function() return autoRaceActive2 end, {tween=raceTween2}) end
+                    if autoRaceActive and currentRaceStage == stage then
+                        local f = getFinishLine(stage)
+                        if f then 
+                            tweenWithNoclip(f, speed, function() return autoRaceActive and currentRaceStage == stage end) 
+                        else
+                            local fallback = stage == 1 and STAGE1_WIN_POS or STAGE2_WIN_POS
+                            tweenWithNoclip(fallback, speed, function() return autoRaceActive and currentRaceStage == stage end)
+                        end
                     end
-                else
-                    task.wait(1)
                 end
             end
         end
     end))
 end
-
-local function stopAutoRace2()
-    if not autoRaceActive2 then return end
-    autoRaceActive2 = false
-    if raceTween2 then pcall(function() raceTween2:Cancel() end) raceTween2 = nil end
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hum then hum.WalkSpeed = origWalk2 or 16; hum.JumpPower = origJump2 or 50; hum.PlatformStand = false; hum.AutoRotate = true end
-        if hrp then hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end
-        setNoclip(char, false)
-    end
-    if raceToggle2 then raceToggle2.setState(false) end
-end
-
 
 -- ==========================================
 -- 8. USER INTERFACE (LUXURY)
@@ -983,7 +920,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS"
+title.Text = "L HUB | NEXUS v62"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1135,20 +1072,21 @@ local function createToggle(parent, text, initialState, callback)
     local thC = Instance.new("UICorner", thumb); thC.CornerRadius = UDim.new(1, 0)
     
     local state = initialState
-    ConnectionManager:Add(track.MouseButton1Click:Connect(function()
-        state = not state
-        track.BackgroundColor3 = state and Color3.fromRGB(130, 80, 255) or Color3.fromRGB(50, 50, 60)
-        TweenService:Create(thumb, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8) }):Play()
-        local success, err = pcall(callback, state)
-        if not success then Logger("UI", "Erro no toggle " .. text .. ": " .. tostring(err)) end
-    end))
+    local toggleObj
     
-    return { frame = frame, track = track, thumb = thumb, setState = function(s, fire)
+    local function setState(s, fire)
         state = (type(s) == "boolean") and s or false
         track.BackgroundColor3 = state and Color3.fromRGB(130, 80, 255) or Color3.fromRGB(50, 50, 60)
         TweenService:Create(thumb, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8) }):Play()
         if fire then pcall(callback, state) end
-    end }
+    end
+    
+    ConnectionManager:Add(track.MouseButton1Click:Connect(function()
+        setState(not state, true)
+    end))
+    
+    toggleObj = { frame = frame, track = track, thumb = thumb, setState = setState }
+    return toggleObj
 end
 
 local function createSlider(parent, labelText, min, max, step, currentValue, callback)
@@ -1185,16 +1123,16 @@ local function createSlider(parent, labelText, min, max, step, currentValue, cal
     local ps = Instance.new("UIStroke", plusBtn); ps.Color = Color3.fromRGB(50, 50, 70)
     
     local val = currentValue
-    local function update(newVal)
+    local function update(newVal, fire)
         if type(newVal) ~= "number" then return end
         val = math.clamp(newVal, min, max)
         val = math.round(val * 100) / 100
         lbl.Text = labelText .. ": " .. val
-        callback(val)
+        if fire then pcall(callback, val) end
     end
     
-    ConnectionManager:Add(minusBtn.MouseButton1Click:Connect(function() update(val - step) end))
-    ConnectionManager:Add(plusBtn.MouseButton1Click:Connect(function() update(val + step) end))
+    ConnectionManager:Add(minusBtn.MouseButton1Click:Connect(function() update(val - step, true) end))
+    ConnectionManager:Add(plusBtn.MouseButton1Click:Connect(function() update(val + step, true) end))
     ConnectionManager:Add(minusBtn.MouseEnter:Connect(function() ms.Color = Color3.fromRGB(130, 80, 255) end))
     ConnectionManager:Add(minusBtn.MouseLeave:Connect(function() ms.Color = Color3.fromRGB(50, 50, 70) end))
     ConnectionManager:Add(plusBtn.MouseEnter:Connect(function() ps.Color = Color3.fromRGB(130, 80, 255) end))
@@ -1303,11 +1241,11 @@ local ESPShinyToggle = createToggle(SectESP, "ESP Arrow Shiny", Config.espShiny,
 local TabRace = createTab("Auto Race", "🏎️")
 local SectRace1 = createSection(TabRace, "AUTO RACE STAGE 1", "🏁")
 SectRace1.LayoutOrder = 1
-raceToggle1 = createToggle(SectRace1, "Enable Auto Race (Stage 1)", false, function(state) if state then startAutoRace1() else stopAutoRace1() end end)
+raceToggle1 = createToggle(SectRace1, "Enable Auto Race (Stage 1)", false, function(state) if state then startAutoRace(1) else stopAutoRace() end end)
 
 local SectRace2 = createSection(TabRace, "AUTO RACE STAGE 2", "🏁")
 SectRace2.LayoutOrder = 2
-raceToggle2 = createToggle(SectRace2, "Enable Auto Race (Stage 2)", false, function(state) if state then startAutoRace2() else stopAutoRace2() end end)
+raceToggle2 = createToggle(SectRace2, "Enable Auto Race (Stage 2)", false, function(state) if state then startAutoRace(2) else stopAutoRace() end end)
 
 local TabAim = createTab("Aimbot", "🎯")
 local SectAimMain = createSection(TabAim, "MAIN SETTINGS", "⚙️")
@@ -1355,7 +1293,7 @@ TaskManager:Add(task.spawn(function()
     end
 end))
 
--- TP KILL (Mantido e Otimizado)
+-- TP KILL
 local TabTPKill = createTab("TP Kill", "💀")
 local SectTPKill = createSection(TabTPKill, "PLAYER LIST", "👤")
 SectTPKill.LayoutOrder = 1
@@ -1516,12 +1454,12 @@ createButton(SectConfig, "Save Settings", function() SaveConfig(false); showToas
 local ResetBtn = createButton(SectConfig, "Reset to Default", function()
     if Environment.HasWriteFile then pcall(function() delfile(CONFIG_FILE) end) end
     for k, v in pairs(DefaultConfig) do Config[k] = v end
-    pcall(stopTpKill); pcall(stopAutoRace1); pcall(stopAutoRace2)
+    pcall(stopTpKill); pcall(stopAutoRace)
     CollectToggle.setState(false, true); AimbotToggle.setState(false, true); FOVToggle.setState(false, true)
     TurnCharToggle.setState(true, true); DashToggle.setState(true, true)
     ESPPlantToggle.setState(false, true); ESPFruitToggle.setState(false, true); ESPArrowToggle.setState(false, true); ESPShinyToggle.setState(false, true)
     cleanESP()
-    FOVRow.update(120); CamHRow.update(8); LatRow.update(0); VertRow.update(0); TPHeightRow.update(6)
+    FOVRow.update(120, true); CamHRow.update(8, true); LatRow.update(0, true); VertRow.update(0, true); TPHeightRow.update(6, true)
     if fovCircle then fovCircle.Visible = false; fovCircle.Radius = 120 end
     aimbotFloatBtn.Position = UDim2.new(0.85, 0, 0.55, 0)
     
@@ -1544,7 +1482,7 @@ Tabs["Stage 1"].Visible = true
 
 ConnectionManager:Add(floatBtn.MouseButton1Click:Connect(function() mainFrame.Visible = not mainFrame.Visible end))
 
--- DRAG
+-- DRAG MAIN FRAME
 local dragging, dragInput, dragStart, startPos
 ConnectionManager:Add(topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1619,4 +1557,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v61 Inicializado com sucesso.")
+Logger("System", "L HUB v62 Inicializado com sucesso.")
