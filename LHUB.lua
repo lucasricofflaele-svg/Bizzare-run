@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v79.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v81.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v79.json"
+local CONFIG_FILE = "LHub_Config_v81.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v79] [%s] %s", module, msg))
+    warn(string.format("[L HUB v81] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -641,7 +641,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 7. AUTO COLLECT & AUTO RACE UNIVERSAL (v79)
+-- 7. AUTO COLLECT & AUTO RACE UNIVERSAL (v81)
 -- ==========================================
 local isCollecting = false
 local function executeCollect()
@@ -700,6 +700,7 @@ end))
 
 local autoRaceActive = false
 local raceToggle
+local lastState = ""
 
 local function stopAutoRace()
     if not autoRaceActive then return end
@@ -716,38 +717,51 @@ local function startAutoRace()
     if autoRaceActive then return end
     autoRaceActive = true
     if raceToggle then raceToggle.setState(true) end
+    lastState = ""
     
     pcall(bypassAntiCheat) 
     
     TaskManager:Add(task.spawn(function()
         while autoRaceActive do
             local success, err = pcall(function()
-                -- CHECAGEM DE MAPA E LOBBY
+                -- CHECAGEM DE LOBBY E CUTSCENE
                 local map = Workspace:FindFirstChild("Map")
-                local isLobbyOrTrain = false
+                local isLobby = false
                 if map then
                     local mapName = string.lower(map.Name)
-                    if string.find(mapName, "lobby") or mapName == "train" or (map:FindFirstChild("Gameplay") and map.Gameplay:FindFirstChild("Train")) then
-                        isLobbyOrTrain = true
-                    end
+                    if string.find(mapName, "lobby") then isLobby = true end
                 end
 
-                -- Só checa Fim de Partida se NÃO estiver no Lobby/Trem
-                if not isLobbyOrTrain then
-                    local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
-                    local raceOverGui = PlayerGui:FindFirstChild("RaceOver")
-                    local rigsFolder = Workspace:FindFirstChild("Rigs")
-                    local myRig = rigsFolder and (rigsFolder:FindFirstChild(LocalPlayer.Name) or rigsFolder:FindFirstChild(LocalPlayer.DisplayName))
-                    local isFinished = false
-                    
-                    if myRig and myRig:GetAttribute("Finished") == true then
-                        isFinished = true
+                local isCutscene = Workspace:GetAttribute("MatchStartCutscene") == true
+
+                -- CHECAGEM DO RIG (Se o jogador terminou a corrida)
+                local rigsFolder = Workspace:FindFirstChild("Rigs")
+                local myRig = rigsFolder and (rigsFolder:FindFirstChild(LocalPlayer.Name) or rigsFolder:FindFirstChild(LocalPlayer.DisplayName))
+                local isFinished = myRig and myRig:GetAttribute("Finished") == true
+
+                -- Checa se a tela de fim de corrida apareceu
+                local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
+                local raceOverGui = PlayerGui:FindFirstChild("RaceOver")
+                
+                if (raceEndedGui and raceEndedGui.Enabled) or (raceOverGui and raceOverGui.Enabled) then
+                    stopAutoRace()
+                    return
+                end
+
+                -- SE ESTIVER NO LOBBY, NA CUTSCENE OU FINISHED FOR TRUE, ESPERA
+                if isLobby or isCutscene or isFinished then
+                    if lastState ~= "waiting" then
+                        showToast("Aguardando início da partida...", GOLD)
+                        lastState = "waiting"
                     end
-                    
-                    if (raceEndedGui and raceEndedGui:IsA("ScreenGui") and raceEndedGui.Enabled) or (raceOverGui and raceOverGui:IsA("ScreenGui") and raceOverGui.Enabled) or isFinished then
-                        stopAutoRace()
-                        return
-                    end
+                    task.wait(1)
+                    return
+                end
+
+                -- SE CHEGOU AQUI, ESTAMOS NA CORRIDA
+                if lastState ~= "running" then
+                    showToast("Corrida Iniciada! Voando...", Color3.fromRGB(50, 255, 100))
+                    lastState = "running"
                 end
 
                 local char = LocalPlayer.Character
@@ -755,11 +769,6 @@ local function startAutoRace()
                 local hrp = char:FindFirstChild("HumanoidRootPart")
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if not hrp or not hum or hum.Health <= 0 then task.wait(1); return end
-                
-                if isLobbyOrTrain then
-                    task.wait(1)
-                    return
-                end
                 
                 local items = {}
                 local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
@@ -961,7 +970,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v79"
+title.Text = "L HUB | NEXUS v81"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1123,12 +1132,10 @@ local function createToggle(parent, text, initialState, callback)
     end
     
     ConnectionManager:Add(track.MouseButton1Click:Connect(function()
-        -- Atualiza a UI ANTES de rodar o callback para evitar travamentos
         state = not state
         track.BackgroundColor3 = state and Color3.fromRGB(130, 80, 255) or Color3.fromRGB(50, 50, 60)
         TweenService:Create(thumb, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8) }):Play()
         
-        -- Chama o callback numa task separada para não travar a UI
         task.spawn(function()
             pcall(callback, state)
         end)
@@ -1259,10 +1266,8 @@ SectRace.LayoutOrder = 1
 raceToggle = createToggle(SectRace, "Enable Auto Race (Anti-Cheat)", false, function(state) 
     if state then 
         startAutoRace() 
-        showToast("Auto Race Ativado! Aguardando Stage...", Color3.fromRGB(50, 255, 100))
     else 
         stopAutoRace() 
-        showToast("Auto Race Desativado!", Color3.fromRGB(255, 100, 100))
     end 
 end)
 
@@ -1600,4 +1605,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v79 Inicializado com sucesso.")
+Logger("System", "L HUB v81 Inicializado com sucesso.")
