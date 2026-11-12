@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v62.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v63.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v62.json"
+local CONFIG_FILE = "LHub_Config_v63.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v62] [%s] %s", module, msg))
+    warn(string.format("[L HUB v63] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -39,7 +39,6 @@ local DefaultConfig = {
 local Config = {}
 for k, v in pairs(DefaultConfig) do Config[k] = v end
 
--- Validação estrita de tipos e limites
 local function ValidateConfig(data)
     if type(data) ~= "table" then return end
     for k, defaultVal in pairs(DefaultConfig) do
@@ -61,7 +60,7 @@ end
 local function LoadConfig()
     if Environment.HasIsFile and Environment.HasReadFile and isfile(CONFIG_FILE) then
         local success, data = pcall(function() return HttpService:JSONDecode(readfile(CONFIG_FILE)) end)
-        if success then ValidateConfig(data) else Logger("Config", "Falha ao ler JSON.") end
+        if success then ValidateConfig(data) end
     end
 end
 LoadConfig()
@@ -76,7 +75,7 @@ local function SaveConfig(silent)
 end
 
 -- ==========================================
--- 2. TASK & CONNECTION MANAGERS (Refatorados)
+-- 2. TASK & CONNECTION MANAGERS
 -- ==========================================
 local TaskManager = { Tasks = {} }
 function TaskManager:Add(thread)
@@ -100,7 +99,6 @@ function ConnectionManager:Clear()
     self.Conns = {}
 end
 
--- Limpeza de instâncias antigas (Hot-reload seguro)
 if _G.LHub then
     pcall(function() RunService:UnbindFromRenderStep("LHubAimbot") end)
     if _G.LHub.Tasks then for _, t in pairs(_G.LHub.Tasks) do if coroutine.status(t) ~= "dead" then pcall(task.cancel, t) end end end
@@ -124,58 +122,66 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 3. MAP & UTILITIES
+-- 3. MAP & UTILITIES (Corrigido com base no DEX)
 -- ==========================================
 local STAGE1_WIN_POS = Vector3.new(3407.000, -408.536, 2287.5)
 local STAGE2_CP1_POS = Vector3.new(-2805.450, -160.060, -1304.949)
 local STAGE2_CP2_POS = Vector3.new(1667.592, -154.669, -1671.076)
 local STAGE2_WIN_POS = Vector3.new(8460.426, 61.457, -1291.114)
-local LOBBY_POS = Vector3.new(-524, 26.250, -476)
 
+-- Função melhorada para pegar o mapa real usando a estrutura do Workspace
 local function getMapName()
+    local mapFolder = Workspace:FindFirstChild("Map")
+    if mapFolder then
+        return string.lower(mapFolder.Name)
+    end
     local gc = ReplicatedStorage:FindFirstChild("GameConfig")
     if gc then
         local m = gc:GetAttribute("Map")
-        return type(m) == "string" and m or ""
+        return type(m) == "string" and string.lower(m) or ""
     end
     return ""
 end
 
--- Correção rigorosa da checagem de mapa para não bugar em "Stage 10" por exemplo
 local function isStage1()
-    local m = string.lower(getMapName())
-    return m == "stage 1" or string.find(m, "stage 1") ~= nil
+    local m = getMapName()
+    return string.find(m, "stage 1") or string.find(m, "stage1") or string.find(m, "1") ~= nil
 end
 
 local function isStage2()
-    local m = string.lower(getMapName())
-    return m == "stage 2" or string.find(m, "stage 2") ~= nil
+    local m = getMapName()
+    return string.find(m, "stage 2") or string.find(m, "stage2") or string.find(m, "2") ~= nil
 end
 
 local function isOnTrain()
-    local m = string.lower(getMapName())
+    local m = getMapName()
     return string.find(m, "train") or string.find(m, "end")
 end
 
+-- Busca o final da linha de forma agressiva
 local function getFinishLine(stage)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
     local closestPart, minDist = nil, 99999
     
-    local finishFolder = Workspace:FindFirstChild("FinishLine", true)
-    if finishFolder then
-        for _, child in ipairs(finishFolder:GetDescendants()) do
-            if child:IsA("BasePart") then
-                local d = (child.Position - hrp.Position).Magnitude
-                if d < minDist then minDist = d; closestPart = child end
+    -- Tenta buscar a pasta FinishLine, End, ou partes nomeadas "Cube."
+    local finishKeywords = {"FinishLine", "End", "Finish"}
+    for _, kw in ipairs(finishKeywords) do
+        local folder = Workspace:FindFirstChild(kw, true)
+        if folder then
+            for _, child in ipairs(folder:GetDescendants()) do
+                if child:IsA("BasePart") then
+                    local d = (child.Position - hrp.Position).Magnitude
+                    if d < minDist then minDist = d; closestPart = child end
+                end
             end
         end
     end
-    
+
     if not closestPart then
         for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and string.find(string.lower(obj.Name), "cube.") then
+            if obj:IsA("BasePart") and (string.find(string.lower(obj.Name), "cube.") or string.find(string.lower(obj.Name), "win")) then
                 local d = (obj.Position - hrp.Position).Magnitude
                 if d < minDist then minDist = d; closestPart = obj end
             end
@@ -233,7 +239,7 @@ local function safeTweenTeleport(targetPos)
     if not hrp then return end
     
     local isTp = true
-    local tpThread = TaskManager:Add(task.spawn(function()
+    TaskManager:Add(task.spawn(function()
         while isTp do pcall(nukeTeleportDetectorsOnly); task.wait(0.1) end
     end))
     
@@ -259,8 +265,8 @@ local function safeTweenTeleport(targetPos)
     task.wait(0.1)
 end
 
--- Retorna true se completou, false se cancelou
-local function tweenWithNoclip(targetPos, speed, checkActive)
+-- Velocidade de tween aumentada drasticamente para "voo" instantâneo
+local function tweenWithNoclip(targetPos, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -269,8 +275,11 @@ local function tweenWithNoclip(targetPos, speed, checkActive)
     
     setNoclip(char, true)
     local dist = (targetPos - hrp.Position).Magnitude
+    
+    -- Speed fixo em 1500 (muito rápido)
+    local speed = 1500 
     local t = dist / speed
-    if t < 0.1 then t = 0.1 end
+    if t < 0.2 then t = 0.2 end -- Mínimo de 0.2s para não bugar o CFrame
     
     local tween = TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), { CFrame = CFrame.new(targetPos) })
     tween:Play()
@@ -308,13 +317,13 @@ local function holdPromptInfinitely(target, checkActive)
         hum.JumpPower = 0
     end)
     
+    -- Do DEX: HoldDuration = 3
     local holdTime = p.HoldDuration > 0 and p.HoldDuration or 0.5
     
     pcall(function()
         while checkActive() and m.Parent ~= nil and p.Parent ~= nil do
             hrp.CFrame = freezeCF
             hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
             pcall(function() p:InputHoldBegin() end)
             local t = tick()
             while tick() - t < holdTime do
@@ -340,7 +349,7 @@ local function holdPromptInfinitely(target, checkActive)
 end
 
 -- ==========================================
--- 5. ESP SYSTEM (Otimizado com Eventos)
+-- 5. ESP SYSTEM
 -- ==========================================
 local function createESP(model, title, color)
     if _G.LHub.ESPObjects[model] then return end
@@ -436,7 +445,6 @@ local function scanItems()
     cleanESP()
 end
 
--- Checagem de itens mais leve e atualização de distância a 0.2s
 TaskManager:Add(task.spawn(function()
     while task.wait(0.2) do
         scanItems()
@@ -456,7 +464,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 6. AIMBOT SYSTEM (Otimizado)
+-- 6. AIMBOT SYSTEM
 -- ==========================================
 local aimbotTarget = nil
 local aimbotHighlight = Instance.new("Highlight")
@@ -657,7 +665,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 7. AUTO COLLECT & AUTO RACE (Refatorados)
+-- 7. AUTO COLLECT & AUTO RACE (O GRANDE FIX)
 -- ==========================================
 local isCollecting = false
 local function executeCollect()
@@ -717,7 +725,7 @@ TaskManager:Add(task.spawn(function()
     end
 end))
 
--- AUTO RACE UNIFICADO (Resolve conflitos de estado)
+-- AUTO RACE UNIFICADO E À PROVA DE FALHAS
 local autoRaceActive = false
 local currentRaceStage = 0
 local origWalk, origJump
@@ -727,12 +735,21 @@ local function stopAutoRace()
     if not autoRaceActive then return end
     autoRaceActive = false
     currentRaceStage = 0
+    
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
         local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hum then hum.WalkSpeed = origWalk or 16; hum.JumpPower = origJump or 50; hum.PlatformStand = false; hum.AutoRotate = true end
-        if hrp then hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end
+        if hum then 
+            hum.WalkSpeed = origWalk or 16
+            hum.JumpPower = origJump or 50
+            hum.PlatformStand = false
+            hum.AutoRotate = true 
+        end
+        if hrp then 
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero 
+        end
         setNoclip(char, false)
     end
     if raceToggle1 then raceToggle1.setState(false) end
@@ -746,8 +763,6 @@ local function startAutoRace(stage)
     autoRaceActive = true
     currentRaceStage = stage
     
-    local speed = stage == 1 and 200 or 400
-    
     TaskManager:Add(task.spawn(function()
         while autoRaceActive and currentRaceStage == stage do
             local char = LocalPlayer.Character
@@ -758,24 +773,24 @@ local function startAutoRace(stage)
             
             if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
             
-            if Workspace:GetAttribute("MatchStartCutscene") then
+            -- Verifica se a corrida começou (Cutscene)
+            local isCutscene = Workspace:GetAttribute("MatchStartCutscene") or Workspace:GetAttribute("RaceStarted") == false
+            if isCutscene then
                 task.wait(1)
             else
-                if isOnTrain() then
+                -- CORREÇÃO: Ignora a string do mapa e usa a lógica real de início
+                -- Se o mapa for Stage 1 ou Stage 2, faz o tween.
+                local m = getMapName()
+                
+                -- Se estiver no trem ou lobby
+                if isOnTrain() or string.find(m, "lobby") then
                     task.wait(1)
-                elseif not isStage1() and not isStage2() then
-                    -- Lobby ou mapa desconhecido
-                    if string.find(string.lower(getMapName()), "lobby") and stage == 1 then
-                        hum.WalkSpeed = 16; hum.PlatformStand = false
-                        if (hrp.Position - LOBBY_POS).Magnitude > 20 then 
-                            tweenWithNoclip(LOBBY_POS, 200, function() return autoRaceActive and currentRaceStage == stage end) 
-                        end
-                        task.wait(0.5)
-                    else
-                        task.wait(1)
-                    end
                 else
-                    hum.WalkSpeed = 0; hum.PlatformStand = true; hum.AutoRotate = false
+                    -- ESTAMOS NO MAPA, INICIA O RACE
+                    hum.WalkSpeed = 0
+                    hum.PlatformStand = true
+                    hum.AutoRotate = false
+                    
                     local targets = {}
                     local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
                     if itemsFolder then
@@ -801,19 +816,25 @@ local function startAutoRace(stage)
                             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
                             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
                             
-                            local success = tweenWithNoclip(standPos, speed, function() return autoRaceActive and currentRaceStage == stage and t.model.Parent ~= nil end)
+                            -- Tween ultra rápido
+                            local success = tweenWithNoclip(standPos, function() return autoRaceActive and currentRaceStage == stage and t.model.Parent ~= nil end)
                             if success then holdPromptInfinitely(t, function() return autoRaceActive and currentRaceStage == stage end) end
                         end
                     end
                     
                     if autoRaceActive and currentRaceStage == stage then
+                        -- Finaliza a corrida: Pega a linha de chegada dinâmica ou usa a posição estática
                         local f = getFinishLine(stage)
-                        if f then 
-                            tweenWithNoclip(f, speed, function() return autoRaceActive and currentRaceStage == stage end) 
-                        else
-                            local fallback = stage == 1 and STAGE1_WIN_POS or STAGE2_WIN_POS
-                            tweenWithNoclip(fallback, speed, function() return autoRaceActive and currentRaceStage == stage end)
+                        if not f then 
+                            f = (stage == 1) and STAGE1_WIN_POS or STAGE2_WIN_POS
                         end
+                        
+                        if f then 
+                            tweenWithNoclip(f, function() return autoRaceActive and currentRaceStage == stage end) 
+                        end
+                        
+                        -- Aguarda 2 segundos para evitar loop infinito no final
+                        task.wait(2)
                     end
                 end
             end
@@ -920,7 +941,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v62"
+title.Text = "L HUB | NEXUS v63"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1557,4 +1578,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v62 Inicializado com sucesso.")
+Logger("System", "L HUB v63 Inicializado com sucesso.")
