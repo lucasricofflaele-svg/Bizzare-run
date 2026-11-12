@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v67.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v68.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v67.json"
+local CONFIG_FILE = "LHub_Config_v68.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v67] [%s] %s", module, msg))
+    warn(string.format("[L HUB v68] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -129,7 +129,6 @@ local STAGE2_WIN_POS = Vector3.new(8541.87793, -166.666595, -1274.94568)
 local STAGE2_CP1_POS = Vector3.new(-2805.450, -160.060, -1304.949)
 local STAGE2_CP2_POS = Vector3.new(1667.592, -154.669, -1671.076)
 
--- O script agora pega TUDO que achar com esses nomes, sem filtro de spawn
 local function getFinishLine()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -151,7 +150,6 @@ local function getFinishLine()
         end
     end
     
-    -- Se não achou a pasta FinishLine, vai pro mais próximo (Stage 1 ou 2)
     if not targetPart then
         local d1 = (hrp.Position - STAGE1_WIN_POS).Magnitude
         local d2 = (hrp.Position - STAGE2_WIN_POS).Magnitude
@@ -178,7 +176,7 @@ local function nukeTeleportDetectorsOnly()
 end
 
 -- ==========================================
--- 4. CORE MECHANICS (Tween, Noclip, Hold)
+-- 4. CORE MECHANICS (Physics Move, Noclip, Hold)
 -- ==========================================
 local function setNoclip(char, state)
     if not char then return end
@@ -233,34 +231,44 @@ local function safeTweenTeleport(targetPos)
     task.wait(0.1)
 end
 
-local function tweenWithNoclip(targetPos, checkActive)
+-- NOVO SISTEMA DE MOVIMENTO: AlignPosition para enganar o anti-cheat
+local function physicsTeleport(targetPos, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return false end
     
+    local oldAlign = hrp:FindFirstChild("AntiCheatAlign")
+    if oldAlign then oldAlign:Destroy() end
+    
     setNoclip(char, true)
-    local dist = (targetPos - hrp.Position).Magnitude
-    local speed = 1500 
-    local t = dist / speed
-    if t < 0.2 then t = 0.2 end
     
-    local tween = TweenService:Create(hrp, TweenInfo.new(t, Enum.EasingStyle.Linear), { CFrame = CFrame.new(targetPos) })
-    tween:Play()
+    local attach = Instance.new("Attachment")
+    attach.Name = "AntiCheatAttach"
+    attach.Parent = hrp
     
-    while tween.PlaybackState == Enum.PlaybackState.Playing do
-        if not checkActive() then
-            tween:Cancel()
-            setNoclip(char, false)
-            return false
-        end
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
+    local align = Instance.new("AlignPosition")
+    align.Name = "AntiCheatAlign"
+    align.Mode = Enum.PositionAlignmentMode.OneAttachment
+    align.Attachment0 = attach
+    align.Position = targetPos
+    align.MaxVelocity = 2000 
+    align.Responsiveness = 200
+    align.Parent = hrp
+    
+    local t = tick()
+    while checkActive() and (hrp.Position - targetPos).Magnitude > 10 and tick() - t < 3 do
         task.wait()
     end
     
+    if align then align:Destroy() end
+    if attach then attach:Destroy() end
+    
     setNoclip(char, false)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    
     return true
 end
 
@@ -665,7 +673,7 @@ local function executeCollect()
             local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
             local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
             
-            local success = tweenWithNoclip(standPos, function() return Config.autoCollect and t.model.Parent ~= nil end)
+            local success = physicsTeleport(standPos, function() return Config.autoCollect and t.model.Parent ~= nil end)
             if success then
                 holdPromptInfinitely(t, function() return Config.autoCollect end)
             end
@@ -703,6 +711,10 @@ local function stopAutoRace()
         if hrp then 
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero 
+            local oldAlign = hrp:FindFirstChild("AntiCheatAlign")
+            if oldAlign then oldAlign:Destroy() end
+            local oldAttach = hrp:FindFirstChild("AntiCheatAttach")
+            if oldAttach then oldAttach:Destroy() end
         end
         setNoclip(char, false)
     end
@@ -727,9 +739,28 @@ local function startAutoRace()
             hum.PlatformStand = true
             hum.AutoRotate = false
             
-            local targets = {}
+            -- 1. PASSAR PELOS CHECKPOINTS (Crucial para o servidor não te barrar)
+            local checkpointsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Checkpoints")
+            if checkpointsFolder then
+                local checkpoints = {}
+                for _, cp in ipairs(checkpointsFolder:GetChildren()) do
+                    table.insert(checkpoints, cp)
+                end
+                table.sort(checkpoints, function(a, b)
+                    local numA = tonumber(a.Name:match("%d+")) or 0
+                    local numB = tonumber(b.Name:match("%d+")) or 0
+                    return numA < numB
+                end)
+                
+                for _, cp in ipairs(checkpoints) do
+                    if not autoRaceActive then break end
+                    physicsTeleport(cp.Position + Vector3.new(0, 3, 0), function() return autoRaceActive end)
+                    task.wait(0.5) -- Dá um tempo pro servidor registrar o checkpoint
+                end
+            end
             
-            -- 1. Arrows
+            -- 2. PEGAR ITENS (Arrows e Rokas)
+            local targets = {}
             local mapEvents = Workspace:FindFirstChild("MapEvents")
             local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
             if arrowsFolder then
@@ -741,7 +772,6 @@ local function startAutoRace()
                 end
             end
             
-            -- 2. Rokas (Pega TUDO que for Roka sem checar spawn)
             local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
             if itemsFolder then
                 for _, item in ipairs(itemsFolder:GetChildren()) do
@@ -767,16 +797,16 @@ local function startAutoRace()
                     local rayResult = Workspace:Raycast(t.pos + Vector3.new(0, 50, 0), Vector3.new(0, -150, 0), rayParams)
                     local standPos = Vector3.new(t.pos.X, (rayResult and rayResult.Position.Y or t.pos.Y) + 3, t.pos.Z)
                     
-                    local success = tweenWithNoclip(standPos, function() return autoRaceActive and t.model.Parent ~= nil end)
+                    local success = physicsTeleport(standPos, function() return autoRaceActive and t.model.Parent ~= nil end)
                     if success then holdPromptInfinitely(t, function() return autoRaceActive end) end
                 end
             end
             
-            -- 3. Vai pra linha de chegada
+            -- 3. IR PARA A LINHA DE CHEGADA
             if autoRaceActive then
                 local f = getFinishLine()
                 if f then 
-                    tweenWithNoclip(f, function() return autoRaceActive end) 
+                    physicsTeleport(f, function() return autoRaceActive end) 
                 end
                 task.wait(3) -- Pausa para a UI de vitória
             end
@@ -883,7 +913,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v67"
+title.Text = "L HUB | NEXUS v68"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1170,7 +1200,7 @@ ConnectionManager:Add(searchBox:GetPropertyChangedSignal("Text"):Connect(filterS
 local TabRace = createTab("Auto Race", "🏎️")
 local SectRace = createSection(TabRace, "AUTO RACE UNIVERSAL", "🏁")
 SectRace.LayoutOrder = 1
-raceToggle = createToggle(SectRace, "Enable Auto Race (Universal)", false, function(state) if state then startAutoRace() else stopAutoRace() end end)
+raceToggle = createToggle(SectRace, "Enable Auto Race (Anti-Cheat)", false, function(state) if state then startAutoRace() else stopAutoRace() end end)
 
 local TabWin = createTab("Teletransporte", "⚔️")
 local SectWinS1 = createSection(TabWin, "TELEPORTES MANUAIS", "🏁")
@@ -1506,4 +1536,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v67 Inicializado com sucesso.")
+Logger("System", "L HUB v68 Inicializado com sucesso.")
