@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v72.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v74.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v72.json"
+local CONFIG_FILE = "LHub_Config_v74.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v72] [%s] %s", module, msg))
+    warn(string.format("[L HUB v74] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -164,7 +164,6 @@ local function getFinishLine()
     return targetPart.Position + Vector3.new(0, 3, 0)
 end
 
--- MATA OS SCRIPTS LOCAIS DE DETECÇÃO
 local function bypassAntiCheat()
     local char = LocalPlayer.Character
     local ps = LocalPlayer:FindFirstChild("PlayerScripts")
@@ -248,7 +247,6 @@ local function safeTweenTeleport(targetPos)
     task.wait(0.1)
 end
 
--- TELEPORTE RÁPIDO: Atravessa tudo em pequenos pulos por frame
 local function fastTeleport(targetPos, checkActive)
     local char = LocalPlayer.Character
     if not char or not char.Parent then return false end
@@ -262,7 +260,6 @@ local function fastTeleport(targetPos, checkActive)
     local startCF = hrp.CFrame
     local targetCF = CFrame.new(targetPos)
     
-    -- Divide a distância em pequenos passos para enganar o anti-cheat (parece velocidade alta)
     local dist = (targetPos - hrp.Position).Magnitude
     local steps = math.clamp(math.floor(dist / 30), 3, 15) 
     
@@ -274,7 +271,7 @@ local function fastTeleport(targetPos, checkActive)
         hrp.CFrame = startCF:Lerp(targetCF, i / steps)
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait() -- 1 frame por passo
+        task.wait() 
     end
     
     hrp.CFrame = targetCF
@@ -713,19 +710,7 @@ local function stopAutoRace()
     
     local char = LocalPlayer.Character
     if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hum then 
-            hum.WalkSpeed = origWalk or 16
-            hum.JumpPower = origJump or 50
-            hum.PlatformStand = false
-            hum.AutoRotate = true 
-        end
-        if hrp then 
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero 
-        end
-        setNoclip(char, false)
+        setNoclip(char, false) -- Só remove o noclip para você não cair do mapa
     end
     if raceToggle then raceToggle.setState(false) end
 end
@@ -738,6 +723,13 @@ local function startAutoRace()
     
     TaskManager:Add(task.spawn(function()
         while autoRaceActive do
+            -- DETECÇÃO DE FIM DE PARTIDA (RACE ENDED)
+            local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
+            if raceEndedGui and raceEndedGui:IsA("ScreenGui") then
+                stopAutoRace()
+                break
+            end
+
             local char = LocalPlayer.Character
             if not char or not char.Parent then task.wait(1); continue end
             local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -745,10 +737,6 @@ local function startAutoRace()
             if not hrp or not hum or hum.Health <= 0 then task.wait(1); continue end
             
             if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
-            
-            hum.WalkSpeed = 0
-            hum.PlatformStand = true
-            hum.AutoRotate = false
             
             -- Pega todos os itens logo de início
             local items = {}
@@ -959,7 +947,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v72"
+title.Text = "L HUB | NEXUS v74"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1582,4 +1570,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v72 Inicializado com sucesso.")
+Logger("System", "L HUB v74 Inicializado com sucesso.")
