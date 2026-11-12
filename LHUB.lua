@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v78.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v79.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -13,10 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v78.json"
+local CONFIG_FILE = "LHub_Config_v79.json"
 
 local function Logger(module, msg)
-    warn(string.format("[L HUB v78] [%s] %s", module, msg))
+    warn(string.format("[L HUB v79] [%s] %s", module, msg))
 end
 
 local Environment = {
@@ -641,7 +641,7 @@ TaskManager:Add(task.spawn(function()
 end))
 
 -- ==========================================
--- 7. AUTO COLLECT & AUTO RACE UNIVERSAL (v78)
+-- 7. AUTO COLLECT & AUTO RACE UNIVERSAL (v79)
 -- ==========================================
 local isCollecting = false
 local function executeCollect()
@@ -699,7 +699,6 @@ TaskManager:Add(task.spawn(function()
 end))
 
 local autoRaceActive = false
-local origWalk, origJump
 local raceToggle
 
 local function stopAutoRace()
@@ -723,19 +722,32 @@ local function startAutoRace()
     TaskManager:Add(task.spawn(function()
         while autoRaceActive do
             local success, err = pcall(function()
-                local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
-                local raceOverGui = PlayerGui:FindFirstChild("RaceOver")
-                local rigsFolder = Workspace:FindFirstChild("Rigs")
-                local myRig = rigsFolder and (rigsFolder:FindFirstChild(LocalPlayer.Name) or rigsFolder:FindFirstChild(LocalPlayer.DisplayName))
-                local isFinished = false
-                
-                if myRig and myRig:GetAttribute("Finished") == true then
-                    isFinished = true
+                -- CHECAGEM DE MAPA E LOBBY
+                local map = Workspace:FindFirstChild("Map")
+                local isLobbyOrTrain = false
+                if map then
+                    local mapName = string.lower(map.Name)
+                    if string.find(mapName, "lobby") or mapName == "train" or (map:FindFirstChild("Gameplay") and map.Gameplay:FindFirstChild("Train")) then
+                        isLobbyOrTrain = true
+                    end
                 end
-                
-                if (raceEndedGui and raceEndedGui:IsA("ScreenGui")) or (raceOverGui and raceOverGui:IsA("ScreenGui")) or isFinished then
-                    stopAutoRace()
-                    return
+
+                -- Só checa Fim de Partida se NÃO estiver no Lobby/Trem
+                if not isLobbyOrTrain then
+                    local raceEndedGui = PlayerGui:FindFirstChild("RaceEnded")
+                    local raceOverGui = PlayerGui:FindFirstChild("RaceOver")
+                    local rigsFolder = Workspace:FindFirstChild("Rigs")
+                    local myRig = rigsFolder and (rigsFolder:FindFirstChild(LocalPlayer.Name) or rigsFolder:FindFirstChild(LocalPlayer.DisplayName))
+                    local isFinished = false
+                    
+                    if myRig and myRig:GetAttribute("Finished") == true then
+                        isFinished = true
+                    end
+                    
+                    if (raceEndedGui and raceEndedGui:IsA("ScreenGui") and raceEndedGui.Enabled) or (raceOverGui and raceOverGui:IsA("ScreenGui") and raceOverGui.Enabled) or isFinished then
+                        stopAutoRace()
+                        return
+                    end
                 end
 
                 local char = LocalPlayer.Character
@@ -744,7 +756,10 @@ local function startAutoRace()
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if not hrp or not hum or hum.Health <= 0 then task.wait(1); return end
                 
-                if not origWalk then origWalk = hum.WalkSpeed; origJump = hum.JumpPower end
+                if isLobbyOrTrain then
+                    task.wait(1)
+                    return
+                end
                 
                 local items = {}
                 local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
@@ -946,7 +961,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 1, 0)
 title.Position = UDim2.new(0, 20, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "L HUB | NEXUS v78"
+title.Text = "L HUB | NEXUS v79"
 title.TextColor3 = GOLD_BRIGHT
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
@@ -1244,7 +1259,7 @@ SectRace.LayoutOrder = 1
 raceToggle = createToggle(SectRace, "Enable Auto Race (Anti-Cheat)", false, function(state) 
     if state then 
         startAutoRace() 
-        showToast("Auto Race Ativado!", Color3.fromRGB(50, 255, 100))
+        showToast("Auto Race Ativado! Aguardando Stage...", Color3.fromRGB(50, 255, 100))
     else 
         stopAutoRace() 
         showToast("Auto Race Desativado!", Color3.fromRGB(255, 100, 100))
@@ -1585,4 +1600,4 @@ ConnectionManager:Add(aimbotFloatBtn.InputEnded:Connect(function(input)
     aimDragging = false; aimDragStart = nil
 end))
 
-Logger("System", "L HUB v78 Inicializado com sucesso.")
+Logger("System", "L HUB v79 Inicializado com sucesso.")
