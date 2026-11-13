@@ -1,4 +1,4 @@
--- language: Lua, file: LHub_v91.lua, target: Roblox (Delta Executor)
+-- language: Lua, file: LHub_v92.lua, target: Roblox (Delta Executor)
 -- ==========================================
 -- 1. ENVIRONMENT & CONFIG MANAGER
 -- ==========================================
@@ -10,10 +10,11 @@ local CoreGui = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local CONFIG_FILE = "LHub_Config_v91.json"
+local CONFIG_FILE = "LHub_Config_v92.json"
 
 local Config = {
     aimbotEnabled = false, aimbotFov = 120, aimbotTurnChar = true,
@@ -52,28 +53,48 @@ if _G.LHub then
 end
 
 _G.LHub = { Gui = nil, Tasks = {}, Conns = {}, ESPObjects = {}, NoclipStates = {} }
+local TaskManager = _G.LHub.Tasks
+local ConnectionManager = _G.LHub.Conns
+
+local function AddTask(func)
+    local t = task.spawn(func)
+    table.insert(TaskManager, t)
+    return t
+end
+
+local function AddConn(conn)
+    table.insert(ConnectionManager, conn)
+    return conn
+end
+
+-- Anti-Watchdog
+AddTask(function()
+    while task.wait(0.5) do
+        pcall(function()
+            if Workspace:FindFirstChild("PHYSICS_WATCHDOG") then Workspace.PHYSICS_WATCHDOG:Destroy() end
+            if Workspace:FindFirstChild("NETWORK_WATCHDOG") then Workspace.NETWORK_WATCHDOG:Destroy() end
+        end)
+    end
+end)
 
 -- ==========================================
 -- 3. UI SOUND DESIGN
 -- ==========================================
 local UI_SOUNDS = {
-    OpenUI    = { Id = "rbxassetid://6895079853", Volume = 0.40, Speed = 1.05 },
-    CloseUI   = { Id = "rbxassetid://6895079853", Volume = 0.35, Speed = 0.85 },
-    TabSwitch = { Id = "rbxassetid://6042053626", Volume = 0.30, Speed = 1.15 },
-    ToggleOn  = { Id = "rbxassetid://876939830",  Volume = 0.45, Speed = 1.10 },
-    ToggleOff = { Id = "rbxassetid://876939830",  Volume = 0.40, Speed = 0.90 },
-    Click     = { Id = "rbxassetid://421058925",  Volume = 0.40, Speed = 1.00 },
-    Notify    = { Id = "rbxassetid://4590657391", Volume = 0.50, Speed = 1.00 },
-    Tick      = { Id = "rbxassetid://421058925",  Volume = 0.15, Speed = 1.45 }
+    OpenUI = { Id = "rbxassetid://6895079853", Volume = 0.4, Speed = 1.05 },
+    CloseUI = { Id = "rbxassetid://6895079853", Volume = 0.35, Speed = 0.85 },
+    TabSwitch = { Id = "rbxassetid://6042053626", Volume = 0.3, Speed = 1.15 },
+    ToggleOn = { Id = "rbxassetid://876939830", Volume = 0.45, Speed = 1.1 },
+    ToggleOff = { Id = "rbxassetid://876939830", Volume = 0.4, Speed = 0.9 },
+    Click = { Id = "rbxassetid://421058925", Volume = 0.4, Speed = 1.0 },
+    Notify = { Id = "rbxassetid://4590657391", Volume = 0.5, Speed = 1.0 },
+    Tick = { Id = "rbxassetid://421058925", Volume = 0.15, Speed = 1.45 }
 }
 
 local loadedSounds = {}
 for name, data in pairs(UI_SOUNDS) do
     local sound = Instance.new("Sound")
-    sound.Name = name
-    sound.SoundId = data.Id
-    sound.Volume = data.Volume
-    sound.PlaybackSpeed = data.Speed
+    sound.Name = name; sound.SoundId = data.Id; sound.Volume = data.Volume; sound.PlaybackSpeed = data.Speed
     sound.Parent = SoundService
     loadedSounds[name] = sound
 end
@@ -98,7 +119,27 @@ local function playSliderTick()
 end
 
 -- ==========================================
--- 4. CORE LOGIC (Aimbot, ESP, Coleta, Race)
+-- 4. THEME PALETTES & GLOBALS
+-- ==========================================
+local ThemePalettes = {
+    ["Obsidian Violet"] = { Background = Color3.fromRGB(18, 16, 24), Surface = Color3.fromRGB(28, 25, 36), Primary = Color3.fromRGB(168, 85, 247) },
+    ["Midnight Fluent"] = { Background = Color3.fromRGB(24, 24, 28), Surface = Color3.fromRGB(32, 32, 38), Primary = Color3.fromRGB(96, 165, 250) },
+    ["Emerald Glass"] = { Background = Color3.fromRGB(15, 23, 20), Surface = Color3.fromRGB(22, 33, 29), Primary = Color3.fromRGB(52, 211, 153) },
+    ["Crimson Dark"] = { Background = Color3.fromRGB(26, 17, 19), Surface = Color3.fromRGB(36, 24, 27), Primary = Color3.fromRGB(244, 63, 94) },
+    ["Monochrome"] = { Background = Color3.fromRGB(20, 20, 20), Surface = Color3.fromRGB(30, 30, 30), Primary = Color3.fromRGB(220, 220, 225) }
+}
+
+local Theme = {}
+local function LoadTheme(name)
+    local t = ThemePalettes[name] or ThemePalettes["Obsidian Violet"]
+    Theme.Background = t.Background; Theme.Surface = t.Surface; Theme.Primary = t.Primary
+    Theme.Text = Color3.fromRGB(255, 255, 255); Theme.Subtext = Color3.fromRGB(170, 170, 180)
+    Theme.Border = Color3.fromRGB(255, 255, 255); Theme.Inactive = Color3.fromRGB(130, 130, 140)
+end
+LoadTheme(Config.theme)
+
+-- ==========================================
+-- 5. CORE LOGIC (Aimbot, ESP, Coleta, Race)
 -- ==========================================
 local function bypassAntiCheat()
     local char = LocalPlayer.Character
@@ -156,6 +197,7 @@ RunService:BindToRenderStep("LHubAimbot", Enum.RenderPriority.Last.Value, functi
     if not cam then return end
     local center = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
     fovCircle.Position = center
+    fovCircle.Color = Theme.Primary
 
     if not Config.aimbotEnabled then
         aimbotHighlight.Enabled = false
@@ -180,6 +222,7 @@ RunService:BindToRenderStep("LHubAimbot", Enum.RenderPriority.Last.Value, functi
     end
 
     if closest then
+        aimbotHighlight.FillColor = Theme.Primary
         aimbotHighlight.Enabled = true
         aimbotHighlight.Adornee = closest.Parent
         local targetPos = closest.Position
@@ -190,9 +233,95 @@ RunService:BindToRenderStep("LHubAimbot", Enum.RenderPriority.Last.Value, functi
     end
 end)
 
+-- ESP Core
+local function createESP(model, title, color)
+    if _G.LHub.ESPObjects[model] then return end
+    local hl = Instance.new("Highlight")
+    hl.Adornee = model; hl.FillColor = color; hl.OutlineColor = Theme.Primary
+    hl.FillTransparency = 0.6; hl.OutlineTransparency = 0.2; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = model
+    
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "LHubESP"; bb.Adornee = model:IsA("Model") and (model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")) or model
+    bb.Size = UDim2.new(0, 200, 0, 20); bb.StudsOffset = Vector3.new(0, 3.5, 0); bb.AlwaysOnTop = true; bb.Parent = model
+    
+    local textLbl = Instance.new("TextLabel", bb)
+    textLbl.Size = UDim2.new(1, 0, 1, 0); textLbl.BackgroundTransparency = 1; textLbl.RichText = true
+    textLbl.TextColor3 = Color3.new(1, 1, 1); textLbl.Font = Enum.Font.GothamBold; textLbl.TextSize = 13; textLbl.TextStrokeTransparency = 0
+    textLbl.Text = string.format("<b><font color='rgb(%d,%d,%d)'>%s</font></b> <font color='#DDDDDD'>[0m]</font>", math.floor(color.R * 255), math.floor(color.G * 255), math.floor(color.B * 255), title)
+    
+    _G.LHub.ESPObjects[model] = { hl = hl, bb = bb, textLbl = textLbl, title = title, color = color }
+end
+
+local function cleanESP()
+    for model, data in pairs(_G.LHub.ESPObjects) do
+        local destroy = false
+        if not model.Parent then destroy = true
+        else
+            local name = string.lower(model.Name)
+            local isPlant = string.find(name, "plant") or string.find(name, "caule")
+            local isRoka = string.find(name, "roka") or string.find(name, "fruit") or string.find(name, "plant")
+            local isShiny = string.find(name, "shiny")
+            local isArrow = string.find(name, "arrow") or model:FindFirstAncestor("Arrows")
+            
+            if isRoka then
+                if isPlant and not Config.espRokaPlant then destroy = true
+                elseif not isPlant and not Config.espRokaFruit then destroy = true end
+            elseif isShiny then
+                if not Config.espShiny then destroy = true end
+            elseif isArrow then
+                if not Config.espArrow then destroy = true end
+            end
+        end
+        if destroy then
+            if data.hl then data.hl:Destroy() end
+            if data.bb then data.bb:Destroy() end
+            _G.LHub.ESPObjects[model] = nil
+        end
+    end
+end
+
+AddTask(function()
+    while task.wait(0.2) do
+        local itemsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Items") and Workspace.Map.Gameplay.Items:FindFirstChild("Spawned")
+        if itemsFolder then
+            for _, item in ipairs(itemsFolder:GetChildren()) do
+                local name = string.lower(item.Name)
+                local isPlant = string.find(name, "plant") or string.find(name, "caule")
+                local isFruit = string.find(name, "roka") or string.find(name, "fruit")
+                if isPlant and Config.espRokaPlant then createESP(item, "Roka Plant", Color3.fromRGB(50, 255, 100))
+                elseif isFruit and Config.espRokaFruit and not isPlant then createESP(item, "Roka Fruit", Color3.fromRGB(255, 105, 180)) end
+            end
+        end
+        local mapEvents = Workspace:FindFirstChild("MapEvents")
+        local arrowsFolder = mapEvents and mapEvents:FindFirstChild("Arrows") and mapEvents.Arrows:FindFirstChild("Spawned")
+        if arrowsFolder then
+            for _, arrow in ipairs(arrowsFolder:GetChildren()) do
+                local name = string.lower(arrow.Name)
+                local isShiny = string.find(name, "shiny")
+                if isShiny and Config.espShiny then createESP(arrow, "Arrow Shiny", Color3.fromRGB(255, 215, 0))
+                elseif not isShiny and Config.espArrow then createESP(arrow, "Arrow", Color3.fromRGB(255, 255, 255)) end
+            end
+        end
+        cleanESP()
+        
+        local char = LocalPlayer.Character
+        if not char or not char.Parent then continue end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            for model, data in pairs(_G.LHub.ESPObjects) do
+                if model.Parent and data.textLbl then
+                    local pos = model:IsA("BasePart") and model.Position or model:GetPivot().Position
+                    local dist = math.floor((pos - hrp.Position).Magnitude)
+                    data.textLbl.Text = string.format("<b><font color='rgb(%d,%d,%d)'>%s</font></b> <font color='#DDDDDD'>[%dm]</font>", math.floor(data.color.R * 255), math.floor(data.color.G * 255), math.floor(data.color.B * 255), data.title, dist)
+                end
+            end
+        end
+    end
+end)
+
 -- Coleta Core
 local isCollecting = false
-task.spawn(function()
+AddTask(function()
     while task.wait(1) do
         if Config.autoCollect and not isCollecting then
             isCollecting = true
@@ -220,35 +349,52 @@ task.spawn(function()
     end
 end)
 
--- ==========================================
--- 5. UI DEFINITIONS & THEMES
--- ==========================================
-local ThemePalettes = {
-    ["Obsidian Violet"] = { Background = Color3.fromRGB(18, 16, 24), Surface = Color3.fromRGB(28, 25, 36), Primary = Color3.fromRGB(168, 85, 247) },
-    ["Midnight Fluent"] = { Background = Color3.fromRGB(24, 24, 28), Surface = Color3.fromRGB(32, 32, 38), Primary = Color3.fromRGB(96, 165, 250) },
-    ["Emerald Glass"] = { Background = Color3.fromRGB(15, 23, 20), Surface = Color3.fromRGB(22, 33, 29), Primary = Color3.fromRGB(52, 211, 153) },
-    ["Crimson Dark"] = { Background = Color3.fromRGB(26, 17, 19), Surface = Color3.fromRGB(36, 24, 27), Primary = Color3.fromRGB(244, 63, 94) },
-    ["Monochrome"] = { Background = Color3.fromRGB(20, 20, 20), Surface = Color3.fromRGB(30, 30, 30), Primary = Color3.fromRGB(220, 220, 225) }
-}
+-- Auto Race Core
+AddTask(function()
+    local lastState = "WAITING"
+    while task.wait(0.5) do
+        if not Config.autoRaceEnabled then continue end
+        local char = LocalPlayer.Character
+        if not char or not char.Parent then continue end
+        local rigs = Workspace:FindFirstChild("Rigs")
+        local myRig = rigs and (rigs:FindFirstChild(LocalPlayer.Name) or rigs:FindFirstChild(LocalPlayer.DisplayName))
+        local placement = myRig and myRig:GetAttribute("Placement") or 0
+        local isFinished = myRig and myRig:GetAttribute("Finished") == true
+        local guiEnded = PlayerGui:FindFirstChild("RaceEnded") and PlayerGui.RaceEnded.Enabled
+        
+        if guiEnded or isFinished then
+            lastState = "FINISHED"
+        elseif placement > 0 and not guiEnded then
+            lastState = "RUNNING"
+            -- Lógica de Checkpoints e Tween rápida
+            local checkpointsFolder = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Gameplay") and Workspace.Map.Gameplay:FindFirstChild("Checkpoints")
+            if checkpointsFolder and lastState == "RUNNING" then
+                local checkpoints = {}
+                for _, cp in ipairs(checkpointsFolder:GetChildren()) do table.insert(checkpoints, cp) end
+                table.sort(checkpoints, function(a, b) return (tonumber(a.Name:match("%d+")) or 0) < (tonumber(b.Name:match("%d+")) or 0) end)
+                for _, cp in ipairs(checkpoints) do
+                    if not Config.autoRaceEnabled or lastState ~= "RUNNING" then break end
+                    local highPos = cp.Position + Vector3.new(0, 150, 0)
+                    pcall(function() safeTweenTeleport(highPos) end)
+                    local cpPos = cp.Position + Vector3.new(0, 3, 0)
+                    pcall(function() safeTweenTeleport(cpPos) end)
+                    task.wait(0.3)
+                end
+                -- Ir pro Finish
+                local f = Workspace:FindFirstChild("FinishLine", true) and Workspace.FinishLine:FindFirstChildWhichIsA("BasePart", true)
+                if f then pcall(function() safeTweenTeleport(f.Position + Vector3.new(0, 3, 0)) end) end
+            end
+        else
+            lastState = "WAITING"
+        end
+    end
+end)
 
-local Theme = {}
-local function LoadTheme(name)
-    local t = ThemePalettes[name] or ThemePalettes["Obsidian Violet"]
-    Theme.Background = t.Background
-    Theme.Surface = t.Surface
-    Theme.Primary = t.Primary
-    Theme.Text = Color3.fromRGB(255, 255, 255)
-    Theme.Subtext = Color3.fromRGB(170, 170, 180)
-    Theme.Border = Color3.fromRGB(255, 255, 255)
-    Theme.Inactive = Color3.fromRGB(130, 130, 140)
-end
-LoadTheme(Config.theme)
-
+-- ==========================================
+-- 6. FLUENT UI (BASE)
+-- ==========================================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FluentProUI"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 999999
+screenGui.Name = "FluentProUI"; screenGui.ResetOnSpawn = false; screenGui.IgnoreGuiInset = true; screenGui.DisplayOrder = 999999
 pcall(function() screenGui.Parent = CoreGui end)
 if not screenGui.Parent then screenGui.Parent = PlayerGui end
 _G.LHub.Gui = screenGui
@@ -259,24 +405,17 @@ notifyContainer.Size = UDim2.new(0, 330, 1, -32); notifyContainer.Position = UDi
 local nLayout = Instance.new("UIListLayout", notifyContainer); nLayout.SortOrder = Enum.SortOrder.LayoutOrder; nLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom; nLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right; nLayout.Padding = UDim.new(0, 12)
 
 local THEMES_NOTIFY = {
-    Info    = { Accent = Color3.fromRGB(96, 165, 250),  Icon = "ℹ" },
-    Success = { Accent = Color3.fromRGB(16, 185, 129),  Icon = "✓" },
-    Warning = { Accent = Color3.fromRGB(245, 158, 11),  Icon = "⚠" },
-    Error   = { Accent = Color3.fromRGB(244, 63, 94),   Icon = "✕" }
+    Info = { Accent = Color3.fromRGB(96, 165, 250), Icon = "ℹ" }, Success = { Accent = Color3.fromRGB(16, 185, 129), Icon = "✓" },
+    Warning = { Accent = Color3.fromRGB(245, 158, 11), Icon = "⚠" }, Error = { Accent = Color3.fromRGB(244, 63, 94), Icon = "✕" }
 }
 
 local function notifyPro(config)
     local theme = THEMES_NOTIFY[config.Type or "Info"] or THEMES_NOTIFY.Info
     playUISound("Notify")
-    
     local wrapper = Instance.new("Frame", notifyContainer); wrapper.Size = UDim2.new(1, 0, 0, 0); wrapper.AutomaticSize = Enum.AutomaticSize.Y; wrapper.BackgroundTransparency = 1
-    local shadow = Instance.new("ImageLabel", wrapper); shadow.Size = UDim2.new(1, 24, 1, 24); shadow.Position = UDim2.new(0, -12, 0, -10)
-    shadow.BackgroundTransparency = 1; shadow.Image = "rbxassetid://6014261993"; shadow.ImageColor3 = Color3.new(0,0,0); shadow.ImageTransparency = 0.45; shadow.ScaleType = Enum.ScaleType.Slice; shadow.SliceCenter = Rect.new(49,49,450,450); shadow.ZIndex = 1
-    
-    local card = Instance.new("Frame", wrapper); card.Size = UDim2.new(1, 0, 0, 0); card.AutomaticSize = Enum.AutomaticSize.Y
-    card.Position = UDim2.new(1, 50, 0, 0); card.BackgroundColor3 = Theme.Background; card.BackgroundTransparency = 0.1; card.ZIndex = 2
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
-    Instance.new("UIStroke", card).Color = Theme.Border
+    local shadow = Instance.new("ImageLabel", wrapper); shadow.Size = UDim2.new(1, 24, 1, 24); shadow.Position = UDim2.new(0, -12, 0, -10); shadow.BackgroundTransparency = 1; shadow.Image = "rbxassetid://6014261993"; shadow.ImageColor3 = Color3.new(0,0,0); shadow.ImageTransparency = 0.45; shadow.ScaleType = Enum.ScaleType.Slice; shadow.SliceCenter = Rect.new(49,49,450,450); shadow.ZIndex = 1
+    local card = Instance.new("Frame", wrapper); card.Size = UDim2.new(1, 0, 0, 0); card.AutomaticSize = Enum.AutomaticSize.Y; card.Position = UDim2.new(1, 50, 0, 0); card.BackgroundColor3 = Theme.Background; card.BackgroundTransparency = 0.1; card.ZIndex = 2
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10); Instance.new("UIStroke", card).Color = Theme.Border
     
     local content = Instance.new("Frame", card); content.Size = UDim2.new(1, 0, 0, 0); content.AutomaticSize = Enum.AutomaticSize.Y; content.BackgroundTransparency = 1; content.ZIndex = 3
     local pad = Instance.new("UIPadding", content); pad.PaddingTop = UDim.new(0, 12); pad.PaddingBottom = UDim.new(0, 14); pad.PaddingLeft = UDim.new(0, 12); pad.PaddingRight = UDim.new(0, 12)
@@ -284,28 +423,19 @@ local function notifyPro(config)
     local badge = Instance.new("Frame", content); badge.Size = UDim2.new(0, 28, 0, 28); badge.BackgroundColor3 = theme.Accent; badge.BackgroundTransparency = 0.84; badge.ZIndex = 4
     Instance.new("UICorner", badge).CornerRadius = UDim.new(1, 0)
     local icon = Instance.new("TextLabel", badge); icon.Size = UDim2.new(1,0,1,0); icon.BackgroundTransparency = 1; icon.Text = theme.Icon; icon.TextColor3 = theme.Accent; icon.Font = Enum.Font.GothamBold; icon.TextSize = 14
-    
-    local titleL = Instance.new("TextLabel", content); titleL.Size = UDim2.new(1, -64, 0, 18); titleL.Position = UDim2.new(0, 38, 0, 0); titleL.BackgroundTransparency = 1
-    titleL.Text = config.Title or "Sistema"; titleL.TextColor3 = Theme.Text; titleL.Font = Enum.Font.GothamBold; titleL.TextSize = 13; titleL.TextXAlignment = Enum.TextXAlignment.Left
-    
-    local msgL = Instance.new("TextLabel", content); msgL.Size = UDim2.new(1, -38, 0, 0); msgL.Position = UDim2.new(0, 38, 0, 20); msgL.AutomaticSize = Enum.AutomaticSize.Y; msgL.BackgroundTransparency = 1
-    msgL.Text = config.Message or ""; msgL.TextColor3 = Theme.Subtext; msgL.Font = Enum.Font.GothamMedium; msgL.TextSize = 12; msgL.TextWrapped = true; msgL.TextXAlignment = Enum.TextXAlignment.Left
-    
+    local titleL = Instance.new("TextLabel", content); titleL.Size = UDim2.new(1, -64, 0, 18); titleL.Position = UDim2.new(0, 38, 0, 0); titleL.BackgroundTransparency = 1; titleL.Text = config.Title or "Sistema"; titleL.TextColor3 = Theme.Text; titleL.Font = Enum.Font.GothamBold; titleL.TextSize = 13; titleL.TextXAlignment = Enum.TextXAlignment.Left
+    local msgL = Instance.new("TextLabel", content); msgL.Size = UDim2.new(1, -38, 0, 0); msgL.Position = UDim2.new(0, 38, 0, 20); msgL.AutomaticSize = Enum.AutomaticSize.Y; msgL.BackgroundTransparency = 1; msgL.Text = config.Message or ""; msgL.TextColor3 = Theme.Subtext; msgL.Font = Enum.Font.GothamMedium; msgL.TextSize = 12; msgL.TextWrapped = true; msgL.TextXAlignment = Enum.TextXAlignment.Left
     local closeBtn = Instance.new("TextButton", content); closeBtn.Size = UDim2.new(0, 20, 0, 20); closeBtn.Position = UDim2.new(1, -20, 0, -2); closeBtn.BackgroundTransparency = 1; closeBtn.Text = "×"; closeBtn.TextColor3 = Theme.Subtext; closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 16
     
     local pTrack = Instance.new("Frame", card); pTrack.Size = UDim2.new(1, 0, 0, 2); pTrack.Position = UDim2.new(0, 0, 1, -2); pTrack.BackgroundColor3 = Theme.Border; pTrack.BackgroundTransparency = 0.94
     local pFill = Instance.new("Frame", pTrack); pFill.Size = UDim2.new(1, 0, 1, 0); pFill.BackgroundColor3 = theme.Accent
-    
     local isClosed, isPaused, timeLeft = false, false, config.Duration or 4.5
     local function closeToast()
-        if isClosed then return end
-        isClosed = true
+        if isClosed then return end; isClosed = true
         local t = TweenService:Create(card, TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { Position = UDim2.new(1, 50, 0, 0), BackgroundTransparency = 1 })
         t:Play(); t.Completed:Once(function() wrapper:Destroy() end)
     end
-    closeBtn.MouseButton1Click:Connect(closeToast)
-    card.MouseEnter:Connect(function() isPaused = true end)
-    card.MouseLeave:Connect(function() isPaused = false end)
+    closeBtn.MouseButton1Click:Connect(closeToast); card.MouseEnter:Connect(function() isPaused = true end); card.MouseLeave:Connect(function() isPaused = false end)
     TweenService:Create(card, TweenInfo.new(0.38, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { Position = UDim2.new(0, 0, 0, 0) }):Play()
     task.spawn(function()
         local lt = os.clock()
@@ -319,30 +449,42 @@ local function notifyPro(config)
 end
 
 -- ==========================================
--- 6. FLUTUANTE E MAIN FRAME
+-- 7. COMPONENTS & THEME APPLIER
+-- ==========================================
+local UI_ELEMENTS = { Surfaces = {}, Accents = {}, Texts = {} }
+local function registerSurface(frame) table.insert(UI_ELEMENTS.Surfaces, frame) end
+local function registerAccent(frame) table.insert(UI_ELEMENTS.Accents, frame) end
+local function registerText(label) table.insert(UI_ELEMENTS.Texts, label) end
+
+local function ApplyTheme(themeName)
+    Config.theme = themeName; SaveConfig(); LoadTheme(themeName)
+    mainFrame.BackgroundColor3 = Theme.Background; sidebar.BackgroundColor3 = Theme.Surface; floatBtn.BackgroundColor3 = Theme.Background
+    scrollContent.ScrollBarImageColor3 = Theme.Primary
+    for _, obj in pairs(UI_ELEMENTS.Surfaces) do obj.BackgroundColor3 = Theme.Surface end
+    for _, obj in pairs(UI_ELEMENTS.Accents) do obj.BackgroundColor3 = Theme.Primary end
+    for _, obj in pairs(UI_ELEMENTS.Texts) do obj.TextColor3 = Theme.Primary end
+    
+    if isOpen then
+        fStroke.Color = Theme.Primary; fIcon.TextColor3 = Theme.Primary; fGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Primary), ColorSequenceKeypoint.new(1, Color3.new(1,1,1)) })
+    else
+        fStroke.Color = Theme.Inactive; fIcon.TextColor3 = Theme.Inactive; fGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Inactive), ColorSequenceKeypoint.new(1, Color3.new(1,1,1)) })
+    end
+    fovCircle.Color = Theme.Primary; aimbotHighlight.FillColor = Theme.Primary
+end
+
+-- ==========================================
+-- 8. FLUTUANTE E MAIN FRAME
 -- ==========================================
 local floatBtnContainer = Instance.new("Frame", screenGui)
-floatBtnContainer.Size = UDim2.new(0, 50, 0, 50); floatBtnContainer.Position = UDim2.new(Config.floatBtnPosXScale, Config.floatBtnPosXOffset, Config.floatBtnPosYScale, Config.floatBtnPosYOffset)
-floatBtnContainer.BackgroundTransparency = 1
+floatBtnContainer.Size = UDim2.new(0, 50, 0, 50); floatBtnContainer.Position = UDim2.new(Config.floatBtnPosXScale, Config.floatBtnPosXOffset, Config.floatBtnPosYScale, Config.floatBtnPosYOffset); floatBtnContainer.BackgroundTransparency = 1
 
-local dropShadow = Instance.new("ImageLabel", floatBtnContainer)
-dropShadow.Size = UDim2.new(1, 8, 1, 8); dropShadow.Position = UDim2.new(0, -4, 0, -4); dropShadow.BackgroundTransparency = 1
-dropShadow.Image = "rbxassetid://6014261993"; dropShadow.ImageColor3 = Color3.new(0,0,0); dropShadow.ImageTransparency = 0.5; dropShadow.ScaleType = Enum.ScaleType.Slice; dropShadow.SliceCenter = Rect.new(49,49,450,450); dropShadow.ZIndex = 1
-
-local floatBtn = Instance.new("TextButton", floatBtnContainer)
-floatBtn.Size = UDim2.new(1, 0, 1, 0); floatBtn.BackgroundColor3 = Theme.Background; floatBtn.BackgroundTransparency = 0.15
-floatBtn.Text = ""; floatBtn.AutoButtonColor = false; floatBtn.ZIndex = 2
+local dropShadow = Instance.new("ImageLabel", floatBtnContainer); dropShadow.Size = UDim2.new(1, 8, 1, 8); dropShadow.Position = UDim2.new(0, -4, 0, -4); dropShadow.BackgroundTransparency = 1; dropShadow.Image = "rbxassetid://6014261993"; dropShadow.ImageColor3 = Color3.new(0,0,0); dropShadow.ImageTransparency = 0.5; dropShadow.ScaleType = Enum.ScaleType.Slice; dropShadow.SliceCenter = Rect.new(49,49,450,450); dropShadow.ZIndex = 1
+local floatBtn = Instance.new("TextButton", floatBtnContainer); floatBtn.Size = UDim2.new(1, 0, 1, 0); floatBtn.BackgroundColor3 = Theme.Background; floatBtn.BackgroundTransparency = 0.15; floatBtn.Text = ""; floatBtn.AutoButtonColor = false; floatBtn.ZIndex = 2
 Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(1, 0)
 
-local fStroke = Instance.new("UIStroke", floatBtn)
-fStroke.Thickness = 1.2; fStroke.Color = Theme.Inactive; fStroke.Transparency = 0.4; fStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-local fGradient = Instance.new("UIGradient", fStroke)
-fGradient.Rotation = 45
-fGradient.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.8), NumberSequenceKeypoint.new(1, 0.2) })
-fGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Inactive), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255)) })
-
-local fIcon = Instance.new("TextLabel", floatBtn)
-fIcon.Size = UDim2.new(1, 0, 1, 0); fIcon.BackgroundTransparency = 1; fIcon.Text = "L"; fIcon.TextColor3 = Theme.Inactive; fIcon.Font = Enum.Font.GothamMedium; fIcon.TextSize = 24; fIcon.ZIndex = 3
+local fStroke = Instance.new("UIStroke", floatBtn); fStroke.Thickness = 1.2; fStroke.Color = Theme.Inactive; fStroke.Transparency = 0.4; fStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+local fGradient = Instance.new("UIGradient", fStroke); fGradient.Rotation = 45; fGradient.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.8), NumberSequenceKeypoint.new(1, 0.2) }); fGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Inactive), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255)) })
+local fIcon = Instance.new("TextLabel", floatBtn); fIcon.Size = UDim2.new(1, 0, 1, 0); fIcon.BackgroundTransparency = 1; fIcon.Text = "L"; fIcon.TextColor3 = Theme.Inactive; fIcon.Font = Enum.Font.GothamMedium; fIcon.TextSize = 24; fIcon.ZIndex = 3
 
 local uiScale = Instance.new("UIScale", floatBtn)
 local tHover = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -351,13 +493,9 @@ floatBtn.MouseLeave:Connect(function() TweenService:Create(uiScale, tHover, { Sc
 floatBtn.MouseButton1Down:Connect(function() TweenService:Create(uiScale, tHover, { Scale = 0.92 }):Play() end)
 floatBtn.MouseButton1Up:Connect(function() TweenService:Create(uiScale, tHover, { Scale = 1.07 }):Play() end)
 
--- Main Frame
-local mainFrame = Instance.new("Frame", screenGui)
-mainFrame.Size = UDim2.new(0, 800, 0, 480); mainFrame.Position = UDim2.new(0.5, -400, 0.5, -240)
+local mainFrame = Instance.new("Frame", screenGui); mainFrame.Size = UDim2.new(0, 800, 0, 480); mainFrame.Position = UDim2.new(0.5, -400, 0.5, -240)
 mainFrame.BackgroundColor3 = Theme.Background; mainFrame.BackgroundTransparency = 0.05; mainFrame.Visible = false
-Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
-local mStroke = Instance.new("UIStroke", mainFrame); mStroke.Color = Theme.Border; mStroke.Transparency = 0.85
-
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12); local mStroke = Instance.new("UIStroke", mainFrame); mStroke.Color = Theme.Border; mStroke.Transparency = 0.85
 local mainScale = Instance.new("UIScale", mainFrame)
 local function updateScale()
     local vp = Workspace.CurrentCamera.ViewportSize
@@ -365,182 +503,100 @@ local function updateScale()
 end
 updateScale(); Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
 
--- Topbar
 local topBar = Instance.new("Frame", mainFrame); topBar.Size = UDim2.new(1,0,0,50); topBar.BackgroundTransparency = 1
-local title = Instance.new("TextLabel", topBar); title.Size = UDim2.new(0,300,1,0); title.Position = UDim2.new(0,20,0,0); title.BackgroundTransparency = 1
-title.Text = "L HUB"; title.TextColor3 = Theme.Text; title.Font = Enum.Font.GothamBold; title.TextSize = 18; title.TextXAlignment = Enum.TextXAlignment.Left
+local title = Instance.new("TextLabel", topBar); title.Size = UDim2.new(0,300,1,0); title.Position = UDim2.new(0,20,0,0); title.BackgroundTransparency = 1; title.Text = "L HUB"; title.TextColor3 = Theme.Text; title.Font = Enum.Font.GothamBold; title.TextSize = 18; title.TextXAlignment = Enum.TextXAlignment.Left
+local closeBtn = Instance.new("TextButton", topBar); closeBtn.Size = UDim2.new(0,30,0,30); closeBtn.Position = UDim2.new(1,-45,0.5,-15); closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeBtn.Text = "X"; closeBtn.TextColor3 = Theme.Text; closeBtn.Font = Enum.Font.GothamBold; Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(1, 0)
 
-local closeBtn = Instance.new("TextButton", topBar); closeBtn.Size = UDim2.new(0,30,0,30); closeBtn.Position = UDim2.new(1,-45,0.5,-15)
-closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeBtn.Text = "X"; closeBtn.TextColor3 = Theme.Text; closeBtn.Font = Enum.Font.GothamBold
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(1, 0)
-
-local sidebar = Instance.new("Frame", mainFrame); sidebar.Size = UDim2.new(0,160,1,-60); sidebar.Position = UDim2.new(0,10,0,50)
-sidebar.BackgroundColor3 = Theme.Surface; sidebar.BackgroundTransparency = 0.3
+local sidebar = Instance.new("Frame", mainFrame); sidebar.Size = UDim2.new(0,160,1,-60); sidebar.Position = UDim2.new(0,10,0,50); sidebar.BackgroundColor3 = Theme.Surface; sidebar.BackgroundTransparency = 0.3
 Instance.new("UICorner", sidebar).CornerRadius = UDim.new(0, 8)
-local sList = Instance.new("UIListLayout", sidebar); sList.Padding = UDim.new(0, 5); sList.SortOrder = Enum.SortOrder.LayoutOrder
-Instance.new("UIPadding", sidebar).PaddingTop = UDim.new(0, 10)
+local sList = Instance.new("UIListLayout", sidebar); sList.Padding = UDim.new(0, 5); sList.SortOrder = Enum.SortOrder.LayoutOrder; Instance.new("UIPadding", sidebar).PaddingTop = UDim.new(0, 10)
 
 local contentArea = Instance.new("Frame", mainFrame); contentArea.Size = UDim2.new(1,-180,1,-60); contentArea.Position = UDim2.new(0,180,0,50); contentArea.BackgroundTransparency = 1
-local scrollContent = Instance.new("ScrollingFrame", contentArea); scrollContent.Size = UDim2.new(1,0,1,0); scrollContent.BackgroundTransparency = 1
-scrollContent.ScrollBarThickness = 2; scrollContent.ScrollBarImageColor3 = Theme.Primary; scrollContent.CanvasSize = UDim2.new(0,0,0,0)
+local scrollContent = Instance.new("ScrollingFrame", contentArea); scrollContent.Size = UDim2.new(1,0,1,0); scrollContent.BackgroundTransparency = 1; scrollContent.ScrollBarThickness = 2; scrollContent.ScrollBarImageColor3 = Theme.Primary; scrollContent.CanvasSize = UDim2.new(0,0,0,0)
 local cList = Instance.new("UIListLayout", scrollContent); cList.Padding = UDim.new(0, 8); cList.SortOrder = Enum.SortOrder.LayoutOrder
 cList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() scrollContent.CanvasSize = UDim2.new(0,0,0,cList.AbsoluteContentSize.Y + 20) end)
 
--- ==========================================
--- 7. COMPONENTS & THEME APPLIER
--- ==========================================
-local UI_ELEMENTS = { Surfaces = {}, Accents = {}, Texts = {} } -- Tabelas para facilitar troca de tema
-
-local function registerSurface(frame) table.insert(UI_ELEMENTS.Surfaces, frame) end
-local function registerAccent(frame) table.insert(UI_ELEMENTS.Accents, frame) end
-local function registerText(label) table.insert(UI_ELEMENTS.Texts, label) end
-
-local function ApplyTheme(themeName)
-    Config.theme = themeName
-    SaveConfig()
-    LoadTheme(themeName)
-    
-    mainFrame.BackgroundColor3 = Theme.Background
-    sidebar.BackgroundColor3 = Theme.Surface
-    floatBtn.BackgroundColor3 = Theme.Background
-    scrollContent.ScrollBarImageColor3 = Theme.Primary
-    
-    for _, obj in pairs(UI_ELEMENTS.Surfaces) do obj.BackgroundColor3 = Theme.Surface end
-    for _, obj in pairs(UI_ELEMENTS.Accents) do obj.BackgroundColor3 = Theme.Primary end
-    for _, obj in pairs(UI_ELEMENTS.Texts) do obj.TextColor3 = Theme.Primary end
-    
-    if isOpen then
-        fStroke.Color = Theme.Primary; fIcon.TextColor3 = Theme.Primary
-        fGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Primary), ColorSequenceKeypoint.new(1, Color3.new(1,1,1)) })
-    else
-        fStroke.Color = Theme.Inactive; fIcon.TextColor3 = Theme.Inactive
-        fGradient.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Theme.Inactive), ColorSequenceKeypoint.new(1, Color3.new(1,1,1)) })
-    end
-    
-    fovCircle.Color = Theme.Primary
-    aimbotHighlight.FillColor = Theme.Primary
-end
-
--- Helpers
+-- Helpers UI
 local function CreateCard(parent, titleText, descText, initialState, callback)
-    local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, -10, 0, 60); card.BackgroundColor3 = Theme.Surface; card.BackgroundTransparency = 0.1
-    card.Parent = parent; Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke", card); stroke.Color = Theme.Border; stroke.Transparency = 0.9
-    registerSurface(card)
-    
-    local t = Instance.new("TextLabel", card); t.Size = UDim2.new(1, -80, 0, 20); t.Position = UDim2.new(0, 15, 0, 10); t.BackgroundTransparency = 1
-    t.Text = titleText; t.TextColor3 = Theme.Text; t.Font = Enum.Font.GothamBold; t.TextSize = 13; t.TextXAlignment = Enum.TextXAlignment.Left
-    local d = Instance.new("TextLabel", card); d.Size = UDim2.new(1, -80, 0, 20); d.Position = UDim2.new(0, 15, 0, 30); d.BackgroundTransparency = 1
-    d.Text = descText; d.TextColor3 = Theme.Subtext; d.Font = Enum.Font.Gotham; d.TextSize = 11; d.TextXAlignment = Enum.TextXAlignment.Left
-    
-    local track = Instance.new("TextButton", card); track.Size = UDim2.new(0, 40, 0, 20); track.Position = UDim2.new(1, -55, 0.5, -10)
-    track.BackgroundColor3 = initialState and Theme.Primary or Color3.fromRGB(60, 60, 60); track.Text = ""
-    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
-    if initialState then registerAccent(track) end
-    
-    local thumb = Instance.new("Frame", track); thumb.Size = UDim2.new(0, 12, 0, 12)
-    thumb.Position = initialState and UDim2.new(1, -16, 0.5, -6) or UDim2.new(0, 4, 0.5, -6)
-    thumb.BackgroundColor3 = Theme.Text; Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
-    
+    local card = Instance.new("Frame"); card.Size = UDim2.new(1, -10, 0, 60); card.BackgroundColor3 = Theme.Surface; card.BackgroundTransparency = 0.1
+    card.Parent = parent; Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8); local stroke = Instance.new("UIStroke", card); stroke.Color = Theme.Border; stroke.Transparency = 0.9; registerSurface(card)
+    local t = Instance.new("TextLabel", card); t.Size = UDim2.new(1, -80, 0, 20); t.Position = UDim2.new(0, 15, 0, 10); t.BackgroundTransparency = 1; t.Text = titleText; t.TextColor3 = Theme.Text; t.Font = Enum.Font.GothamBold; t.TextSize = 13; t.TextXAlignment = Enum.TextXAlignment.Left
+    local d = Instance.new("TextLabel", card); d.Size = UDim2.new(1, -80, 0, 20); d.Position = UDim2.new(0, 15, 0, 30); d.BackgroundTransparency = 1; d.Text = descText; d.TextColor3 = Theme.Subtext; d.Font = Enum.Font.Gotham; d.TextSize = 11; d.TextXAlignment = Enum.TextXAlignment.Left
+    local track = Instance.new("TextButton", card); track.Size = UDim2.new(0, 40, 0, 20); track.Position = UDim2.new(1, -55, 0.5, -10); track.BackgroundColor3 = initialState and Theme.Primary or Color3.fromRGB(60, 60, 60); track.Text = ""; Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0); if initialState then registerAccent(track) end
+    local thumb = Instance.new("Frame", track); thumb.Size = UDim2.new(0, 12, 0, 12); thumb.Position = initialState and UDim2.new(1, -16, 0.5, -6) or UDim2.new(0, 4, 0.5, -6); thumb.BackgroundColor3 = Theme.Text; Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
     local state = initialState
-    track:SetAttribute("IsOn", state)
     track.MouseButton1Click:Connect(function()
-        state = not state
-        track:SetAttribute("IsOn", state)
-        playUISound(state and "ToggleOn" or "ToggleOff")
-        TweenService:Create(thumb, TweenInfo.new(0.1), { Size = UDim2.new(0, 16, 0, 16) }):Play()
-        task.delay(0.1, function() TweenService:Create(thumb, TweenInfo.new(0.1), { Size = UDim2.new(0, 12, 0, 12) }):Play() end)
-        TweenService:Create(track, TweenInfo.new(0.15), { BackgroundColor3 = state and Theme.Primary or Color3.fromRGB(60, 60, 60) }):Play()
-        TweenService:Create(thumb, TweenInfo.new(0.15), { Position = state and UDim2.new(1, -16, 0.5, -6) or UDim2.new(0, 4, 0.5, -6) }):Play()
-        if state then table.insert(UI_ELEMENTS.Accents, track) else 
-            for i, v in ipairs(UI_ELEMENTS.Accents) do if v == track then table.remove(UI_ELEMENTS.Accents, i) break end end 
-        end
+        state = not state; playUISound(state and "ToggleOn" or "ToggleOff")
+        TweenService:Create(thumb, TweenInfo.new(0.1), { Size = UDim2.new(0, 16, 0, 16) }):Play(); task.delay(0.1, function() TweenService:Create(thumb, TweenInfo.new(0.1), { Size = UDim2.new(0, 12, 0, 12) }):Play() end)
+        TweenService:Create(track, TweenInfo.new(0.15), { BackgroundColor3 = state and Theme.Primary or Color3.fromRGB(60, 60, 60) }):Play(); TweenService:Create(thumb, TweenInfo.new(0.15), { Position = state and UDim2.new(1, -16, 0.5, -6) or UDim2.new(0, 4, 0.5, -6) }):Play()
+        if state then table.insert(UI_ELEMENTS.Accents, track) else for i, v in ipairs(UI_ELEMENTS.Accents) do if v == track then table.remove(UI_ELEMENTS.Accents, i) break end end end
         pcall(callback, state)
     end)
-    card.MouseEnter:Connect(function() TweenService:Create(stroke, TweenInfo.new(0.15), { Transparency = 0.6 }):Play() end)
-    card.MouseLeave:Connect(function() TweenService:Create(stroke, TweenInfo.new(0.15), { Transparency = 0.9 }):Play() end)
+    card.MouseEnter:Connect(function() TweenService:Create(stroke, TweenInfo.new(0.15), { Transparency = 0.6 }):Play() end); card.MouseLeave:Connect(function() TweenService:Create(stroke, TweenInfo.new(0.15), { Transparency = 0.9 }):Play() end)
 end
 
 local Tabs, TabButtons = {}, {}
 local function CreateTab(name)
-    local btn = Instance.new("TextButton", sidebar); btn.Size = UDim2.new(1, -20, 0, 36)
-    btn.BackgroundColor3 = Theme.Surface; btn.BackgroundTransparency = 1
-    btn.Text = "   " .. name; btn.TextColor3 = Theme.Subtext; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.TextXAlignment = Enum.TextXAlignment.Left
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    
-    local ind = Instance.new("Frame", btn); ind.Size = UDim2.new(0, 3, 0.4, 0); ind.Position = UDim2.new(0, 0, 0.3, 0)
-    ind.BackgroundColor3 = Theme.Primary; ind.Visible = false; Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0)
-    registerAccent(ind)
-    
-    local frame = Instance.new("Frame", scrollContent); frame.Size = UDim2.new(1,0,0,0); frame.AutomaticSize = Enum.AutomaticSize.Y; frame.BackgroundTransparency = 1; frame.Visible = false
-    local tLayout = Instance.new("UIListLayout", frame); tLayout.Padding = UDim.new(0, 8); tLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    
+    local btn = Instance.new("TextButton", sidebar); btn.Size = UDim2.new(1, -20, 0, 36); btn.BackgroundColor3 = Theme.Surface; btn.BackgroundTransparency = 1; btn.Text = "   " .. name; btn.TextColor3 = Theme.Subtext; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.TextXAlignment = Enum.TextXAlignment.Left; Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    local ind = Instance.new("Frame", btn); ind.Size = UDim2.new(0, 3, 0.4, 0); ind.Position = UDim2.new(0, 0, 0.3, 0); ind.BackgroundColor3 = Theme.Primary; ind.Visible = false; Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0); registerAccent(ind)
+    local frame = Instance.new("Frame", scrollContent); frame.Size = UDim2.new(1,0,0,0); frame.AutomaticSize = Enum.AutomaticSize.Y; frame.BackgroundTransparency = 1; frame.Visible = false; local tLayout = Instance.new("UIListLayout", frame); tLayout.Padding = UDim.new(0, 8); tLayout.SortOrder = Enum.SortOrder.LayoutOrder
     TabButtons[name] = btn; Tabs[name] = frame
-    
     btn.MouseButton1Click:Connect(function()
         playUISound("TabSwitch")
         for _, f in pairs(Tabs) do f.Visible = false end
-        for _, b in pairs(TabButtons) do
-            TweenService:Create(b, TweenInfo.new(0.15), { BackgroundTransparency = 1, TextColor3 = Theme.Subtext }):Play()
-            b:FindFirstChildWhichIsA("Frame").Visible = false
-        end
-        frame.Visible = true
-        TweenService:Create(btn, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(50, 50, 50), BackgroundTransparency = 0.4, TextColor3 = Theme.Text }):Play()
-        ind.Visible = true
+        for _, b in pairs(TabButtons) do TweenService:Create(b, TweenInfo.new(0.15), { BackgroundTransparency = 1, TextColor3 = Theme.Subtext }):Play(); b:FindFirstChildWhichIsA("Frame").Visible = false end
+        frame.Visible = true; TweenService:Create(btn, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(50, 50, 50), BackgroundTransparency = 0.4, TextColor3 = Theme.Text }):Play(); ind.Visible = true
     end)
     return frame
 end
 
 -- ==========================================
--- 8. POPULANDO TABS (Incluindo Config)
+-- 9. POPULANDO TABS (TUDO RESTAURADO)
 -- ==========================================
 local TabHome = CreateTab("Home")
-local TabPlayer = CreateTab("Player")
-local TabVisuals = CreateTab("Visuals")
+local TabAutoRace = CreateTab("Auto Race")
+local TabPlayer = CreateTab("Player (Aimbot)")
+local TabVisuals = CreateTab("Visuals (ESP)")
 local TabMisc = CreateTab("Misc")
 local TabConfig = CreateTab("Config")
 
--- HOME
-local homeLabel = Instance.new("TextLabel", TabHome); homeLabel.Size = UDim2.new(1, 0, 0, 60); homeLabel.BackgroundTransparency = 1
-homeLabel.Text = "Bem-vindo ao L HUB FluentPro v91.\nAltere o tema do seu HUB na aba Config."; homeLabel.TextColor3 = Theme.Subtext
-homeLabel.Font = Enum.Font.GothamMedium; homeLabel.TextSize = 14; homeLabel.TextXAlignment = Enum.TextXAlignment.Left; homeLabel.TextYAlignment = Enum.TextYAlignment.Top
+local homeLabel = Instance.new("TextLabel", TabHome); homeLabel.Size = UDim2.new(1, 0, 0, 60); homeLabel.BackgroundTransparency = 1; homeLabel.Text = "Bem-vindo ao L HUB FluentPro.\nTodas as funções foram restauradas e otimizadas."; homeLabel.TextColor3 = Theme.Subtext; homeLabel.Font = Enum.Font.GothamMedium; homeLabel.TextSize = 14; homeLabel.TextXAlignment = Enum.TextXAlignment.Left; homeLabel.TextYAlignment = Enum.TextYAlignment.Top
 
--- PLAYER
-CreateCard(TabPlayer, "Enable Aimbot", "Ativa a mira automática (Aim Assist).", Config.aimbotEnabled, function(s) Config.aimbotEnabled = s; SaveConfig() end)
-CreateCard(TabPlayer, "FOV Circle", "Mostra o alcance da mira na tela.", Config.fovCircleOn, function(s) Config.fovCircleOn = s; fovCircle.Visible = s; SaveConfig() end)
+-- AUTO RACE
+CreateCard(TabAutoRace, "Enable Auto Race", "Piloto automático com bypass de checkpoints.", Config.autoRaceEnabled, function(s) Config.autoRaceEnabled = s; SaveConfig() end)
+local btnTP1 = Instance.new("TextButton", TabAutoRace); btnTP1.Size = UDim2.new(1, -10, 0, 45); btnTP1.BackgroundColor3 = Theme.Surface; btnTP1.Text = "TP Stage 1"; btnTP1.TextColor3 = Theme.Text; btnTP1.Font = Enum.Font.GothamBold; btnTP1.TextSize = 13; btnTP1.Parent = TabAutoRace; Instance.new("UICorner", btnTP1).CornerRadius = UDim.new(0, 8); registerSurface(btnTP1)
+btnTP1.MouseButton1Click:Connect(function() safeTweenTeleport(Vector3.new(3269, -239, 2052)) end)
+local btnTP2 = Instance.new("TextButton", TabAutoRace); btnTP2.Size = UDim2.new(1, -10, 0, 45); btnTP2.BackgroundColor3 = Theme.Surface; btnTP2.Text = "TP Stage 2"; btnTP2.TextColor3 = Theme.Text; btnTP2.Font = Enum.Font.GothamBold; btnTP2.TextSize = 13; btnTP2.Parent = TabAutoRace; Instance.new("UICorner", btnTP2).CornerRadius = UDim.new(0, 8); registerSurface(btnTP2)
+btnTP2.MouseButton1Click:Connect(function() safeTweenTeleport(Vector3.new(8541, -166, -1274)) end)
 
--- VISUALS
+-- PLAYER (Aimbot)
+CreateCard(TabPlayer, "Enable Aimbot", "Ativa a mira automática.", Config.aimbotEnabled, function(s) Config.aimbotEnabled = s; SaveConfig() end)
+CreateCard(TabPlayer, "FOV Circle", "Mostra o círculo de alcance.", Config.fovCircleOn, function(s) Config.fovCircleOn = s; fovCircle.Visible = s; SaveConfig() end)
+CreateCard(TabPlayer, "Turn Character", "Gira o personagem para o alvo.", Config.aimbotTurnChar, function(s) Config.aimbotTurnChar = s; SaveConfig() end)
+CreateCard(TabPlayer, "Strong Dash", "Aumenta a velocidade base.", Config.dashStrong, function(s) Config.dashStrong = s; SaveConfig() end)
+
+-- VISUALS (ESP)
 CreateCard(TabVisuals, "ESP Rokakaka Plant", "Destaca plantas no mapa.", Config.espRokaPlant, function(s) Config.espRokaPlant = s; SaveConfig() end)
 CreateCard(TabVisuals, "ESP Rokakaka Fruit", "Destaca frutas no mapa.", Config.espRokaFruit, function(s) Config.espRokaFruit = s; SaveConfig() end)
+CreateCard(TabVisuals, "ESP Arrow", "Destaca flechas normais.", Config.espArrow, function(s) Config.espArrow = s; SaveConfig() end)
+CreateCard(TabVisuals, "ESP Arrow Shiny", "Destaca flechas raras.", Config.espShiny, function(s) Config.espShiny = s; SaveConfig() end)
 
 -- MISC
 CreateCard(TabMisc, "Auto Collect", "Coleta itens automaticamente.", Config.autoCollect, function(s) Config.autoCollect = s; SaveConfig() end)
 
--- CONFIG (Theme Switcher)
-local themeLabel = Instance.new("TextLabel", TabConfig); themeLabel.Size = UDim2.new(1, -10, 0, 20); themeLabel.BackgroundTransparency = 1
-themeLabel.Text = "Selecione o Tema da UI:"; themeLabel.TextColor3 = Theme.Text; themeLabel.Font = Enum.Font.GothamBold; themeLabel.TextSize = 13; themeLabel.TextXAlignment = Enum.TextXAlignment.Left
-
+-- CONFIG
+local themeLabel = Instance.new("TextLabel", TabConfig); themeLabel.Size = UDim2.new(1, -10, 0, 20); themeLabel.BackgroundTransparency = 1; themeLabel.Text = "Selecione o Tema da UI:"; themeLabel.TextColor3 = Theme.Text; themeLabel.Font = Enum.Font.GothamBold; themeLabel.TextSize = 13; themeLabel.TextXAlignment = Enum.TextXAlignment.Left
 for themeName, colors in pairs(ThemePalettes) do
-    local btn = Instance.new("TextButton", TabConfig)
-    btn.Size = UDim2.new(1, -10, 0, 40); btn.BackgroundColor3 = colors.Surface; btn.BackgroundTransparency = 0.2
-    btn.Text = "   " .. themeName; btn.TextColor3 = Color3.new(1,1,1); btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.TextXAlignment = Enum.TextXAlignment.Left
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    local btn = Instance.new("TextButton", TabConfig); btn.Size = UDim2.new(1, -10, 0, 40); btn.BackgroundColor3 = colors.Surface; btn.BackgroundTransparency = 0.2; btn.Text = "   " .. themeName; btn.TextColor3 = Color3.new(1,1,1); btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.TextXAlignment = Enum.TextXAlignment.Left; Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     local stroke = Instance.new("UIStroke", btn); stroke.Color = colors.Primary; stroke.Thickness = 2; stroke.Transparency = 0.5
-    
-    btn.MouseButton1Click:Connect(function()
-        playUISound("Click")
-        ApplyTheme(themeName)
-        notifyPro({ Title = "Tema Alterado", Message = "A UI foi atualizada para " .. themeName, Type = "Info", Duration = 3 })
-    end)
+    btn.MouseButton1Click:Connect(function() playUISound("Click"); ApplyTheme(themeName); notifyPro({ Title = "Tema Alterado", Message = "UI atualizada para " .. themeName, Type = "Info", Duration = 3 }) end)
 end
 
 -- Default Tab
-TabButtons["Home"].BackgroundColor3 = Color3.fromRGB(50, 50, 50); TabButtons["Home"].BackgroundTransparency = 0.4
-TabButtons["Home"].TextColor3 = Theme.Text; TabButtons["Home"]:FindFirstChildWhichIsA("Frame").Visible = true; Tabs["Home"].Visible = true
+TabButtons["Home"].BackgroundColor3 = Color3.fromRGB(50, 50, 50); TabButtons["Home"].BackgroundTransparency = 0.4; TabButtons["Home"].TextColor3 = Theme.Text; TabButtons["Home"]:FindFirstChildWhichIsA("Frame").Visible = true; Tabs["Home"].Visible = true
 
 -- ==========================================
--- 9. DRAG & FINAL BINDINGS
+-- 10. DRAG & BOTÃO TOGGLE (CORRIGIDO)
 -- ==========================================
 local isOpen = false
 local dragging, moved, dragInput, dragStart, startPos
@@ -562,7 +618,11 @@ local function toggleMenu()
         TweenService:Create(fStroke, TweenInfo.new(0.2), { Color = Theme.Inactive }):Play()
         TweenService:Create(fGradient, TweenInfo.new(0.2), { Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Theme.Inactive), ColorSequenceKeypoint.new(1, Color3.new(1,1,1))}) }):Play()
         TweenService:Create(fIcon, TweenInfo.new(0.2), { TextColor3 = Theme.Inactive }):Play()
-        closeTween.Completed:Connect(function() if not isOpen then mainFrame.Visible = false end end)
+        
+        -- CORREÇÃO DO BUG DE FECHAR (Usa task.delay para esperar o tween acabar sem sobrepor)
+        task.delay(0.18, function()
+            if not isOpen then mainFrame.Visible = false end
+        end)
     end
 end
 
@@ -596,10 +656,8 @@ end)
 floatBtn.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         if moved then
-            Config.floatBtnPosXScale = floatBtnContainer.Position.X.Scale
-            Config.floatBtnPosXOffset = floatBtnContainer.Position.X.Offset
-            Config.floatBtnPosYScale = floatBtnContainer.Position.Y.Scale
-            Config.floatBtnPosYOffset = floatBtnContainer.Position.Y.Offset
+            Config.floatBtnPosXScale = floatBtnContainer.Position.X.Scale; Config.floatBtnPosXOffset = floatBtnContainer.Position.X.Offset
+            Config.floatBtnPosYScale = floatBtnContainer.Position.Y.Scale; Config.floatBtnPosYOffset = floatBtnContainer.Position.Y.Offset
             SaveConfig()
         end
     end
@@ -620,7 +678,5 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Inicia com o tema carregado
 ApplyTheme(Config.theme)
-
-warn("[L HUB v91] FluentPro Theme Switcher Carregado.")
+warn("[L HUB v92] FluentPro Completo Carregado com Sucesso.")
